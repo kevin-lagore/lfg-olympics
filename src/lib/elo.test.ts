@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   computeRatings,
+  computeGameDeltas,
+  gameDelta,
   expectedScore,
   STARTING_RATING,
   K_FACTOR,
@@ -210,5 +212,155 @@ describe("exclude behaviour", () => {
     expect(out.get("B")!.rating).toBe(STARTING_RATING);
     expect(out.get("A")!.gamesPlayed).toBe(0);
     expect(out.get("A")!.lastChange).toBeNull();
+  });
+});
+
+// --- gameDelta helper -----------------------------------------------------
+
+describe("gameDelta helper", () => {
+  it("equal singles -> 32", () => {
+    expect(gameDelta([1500], [1500])).toBeCloseTo(32, 6);
+  });
+
+  it("applies underdog x1.3 when winners' avg is strictly lower", () => {
+    expect(gameDelta([1300], [1700])).toBeCloseTo(
+      K_FACTOR * (1 - expectedScore(1300, 1700)) * UNDERDOG_MULTIPLIER,
+      6,
+    );
+    expect(Math.round(gameDelta([1300], [1700]))).toBe(76); // §4 worked example
+  });
+
+  it("no underdog multiplier when winners' avg >= losers' avg", () => {
+    expect(gameDelta([1700], [1300])).toBeCloseTo(
+      K_FACTOR * (1 - expectedScore(1700, 1300)),
+      6,
+    );
+  });
+
+  it("uses team means for doubles (matches §4 upset example -> 63)", () => {
+    expect(Math.round(gameDelta([1400, 1400], [1600, 1600]))).toBe(63);
+  });
+});
+
+// --- computeGameDeltas (per-row history deltas) ---------------------------
+
+describe("computeGameDeltas", () => {
+  it("reports a signed delta per participant per game, consistent with the replay", () => {
+    seq = 200;
+    const players = [player("A"), player("B")];
+    const g1 = game(["A"], ["B"]); // A +32, B -32
+    const g2 = game(["A"], ["B"]); // A now favourite, smaller delta
+    const deltas = computeGameDeltas([g1, g2], players);
+
+    // Game 1: equal ratings.
+    expect(deltas.get(g1.id)!.get("A")).toBeCloseTo(32, 6);
+    expect(deltas.get(g1.id)!.get("B")).toBeCloseTo(-32, 6);
+
+    // Game 2: pre-game A=1532, B=1468 -> favourite wins, delta < 32.
+    const d2 = deltas.get(g2.id)!.get("A")!;
+    expect(d2).toBeGreaterThan(0);
+    expect(d2).toBeLessThan(32);
+    expect(deltas.get(g2.id)!.get("B")).toBeCloseTo(-d2, 6);
+
+    // The per-game deltas must sum to each player's final movement from start.
+    const final = computeRatings([g1, g2], players);
+    const sumA =
+      deltas.get(g1.id)!.get("A")! + deltas.get(g2.id)!.get("A")!;
+    expect(STARTING_RATING + sumA).toBeCloseTo(final.get("A")!.rating, 6);
+  });
+
+  it("does not let an excluded game advance ratings for later games", () => {
+    seq = 300;
+    const players = [player("A"), player("B")];
+    // Excluded first game; the SECOND (included) game must see equal pre-game
+    // ratings (1500/1500) because the excluded one did not move anything.
+    const g1 = game(["A"], ["B"], { excluded: true });
+    const g2 = game(["A"], ["B"]);
+    const deltas = computeGameDeltas([g1, g2], players);
+
+    // g2 evaluated against fresh 1500/1500 -> 32.
+    expect(deltas.get(g2.id)!.get("A")).toBeCloseTo(32, 6);
+    // g1 still reports the delta it would have applied (also 32 at 1500/1500),
+    // but it is flagged excluded and never moved the running ratings.
+    expect(deltas.get(g1.id)!.get("A")).toBeCloseTo(32, 6);
+  });
+});
+
+// --- Orchestrator verification: 5 games / exclude #3 / re-include ----------
+
+describe("exclude/re-include matches a replay that skips the game (5-game scenario)", () => {
+  function fiveGames(): { players: Player[]; games: Game[] } {
+    seq = 400;
+    const players = [
+      player("A"),
+      player("B"),
+      player("C"),
+      player("D"),
+    ];
+    const games: Game[] = [
+      game(["A"], ["B"]), // g1
+      game(["C"], ["D"]), // g2
+      game(["A"], ["C"]), // g3  <-- the one we toggle
+      game(["B"], ["D"]), // g4
+      game(["A", "C"], ["B", "D"]), // g5 doubles
+    ];
+    return { players, games };
+  }
+
+  it("excluding game 3 == a replay built without game 3", () => {
+    const { players, games } = fiveGames();
+    const g3 = games[2];
+
+    const baseline = computeRatings(games, players); // all 5 included
+
+    // Approach 1: flip excluded on g3.
+    const excludedFlag = computeRatings(
+      games.map((g) => (g.id === g3.id ? { ...g, excluded: true } : g)),
+      players,
+    );
+    // Approach 2: physically omit g3 from the input set.
+    const omitted = computeRatings(
+      games.filter((g) => g.id !== g3.id),
+      players,
+    );
+
+    for (const id of ["A", "B", "C", "D"]) {
+      // The flag flip and the physical omission must be identical.
+      expect(excludedFlag.get(id)!.rating).toBeCloseTo(
+        omitted.get(id)!.rating,
+        9,
+      );
+      // And excluding genuinely changed the leaderboard vs the full set
+      // (sanity: g3 actually mattered for its participants).
+    }
+    expect(excludedFlag.get("A")!.rating).not.toBeCloseTo(
+      baseline.get("A")!.rating,
+      6,
+    );
+  });
+
+  it("re-including restores the original ratings exactly", () => {
+    const { players, games } = fiveGames();
+    const g3 = games[2];
+
+    const original = computeRatings(games, players);
+
+    // Exclude then re-include (flag back to false) -> back to original.
+    const reincluded = computeRatings(
+      games.map((g) =>
+        g.id === g3.id ? { ...g, excluded: false } : g,
+      ),
+      players,
+    );
+
+    for (const id of ["A", "B", "C", "D"]) {
+      expect(reincluded.get(id)!.rating).toBeCloseTo(
+        original.get(id)!.rating,
+        9,
+      );
+      expect(reincluded.get(id)!.gamesPlayed).toBe(
+        original.get(id)!.gamesPlayed,
+      );
+    }
   });
 });

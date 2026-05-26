@@ -4,6 +4,7 @@ import { useState } from "react";
 import { BottomTabBar, type TabKey } from "@/components/BottomTabBar";
 import { Leaderboard } from "@/components/Leaderboard";
 import { RecordResult } from "@/components/RecordResult";
+import { History } from "@/components/History";
 import { useOlympicsData } from "@/lib/useOlympicsData";
 
 function ComingSoon({ title }: { title: string }) {
@@ -47,7 +48,15 @@ export default function Home() {
             onRefresh={refresh}
           />
         )}
-        {tab === "history" && <ComingSoon title="History" />}
+        {tab === "history" && (
+          <History
+            players={players}
+            activities={activities}
+            games={games}
+            loading={loading}
+            onRefresh={refresh}
+          />
+        )}
         {tab === "stats" && <ComingSoon title="Per-activity Stats" />}
         {tab === "commentary" && <ComingSoon title="Commentary" />}
       </main>
