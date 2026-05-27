@@ -25,8 +25,19 @@ export type Game = {
   created_at: string;
 };
 
+// Per-activity commentary (legacy; retained in schema but no longer used by
+// View 5 — superseded by the unified TournamentCommentary below).
 export type Commentary = {
   activity_id: string;
+  content: string;
+  games_at_generation: number;
+  generated_at: string;
+};
+
+// Unified tournament commentary — a single row (id always 1) covering the whole
+// tournament. Auto-regenerated whenever a new game is logged (CLAUDE.md §5).
+export type TournamentCommentary = {
+  id: number;
   content: string;
   games_at_generation: number;
   generated_at: string;

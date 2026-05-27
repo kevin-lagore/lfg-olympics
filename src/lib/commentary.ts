@@ -1,108 +1,55 @@
-// Commentary staleness + prompt helpers (CLAUDE.md §5 View 5).
+// Unified tournament commentary helpers (CLAUDE.md §5 View 5).
 //
-// Commentary is cached one row per activity. A cache is "stale" — and the UI
-// should offer "Regenerate" rather than just "Generate" — when more
-// non-excluded games have been logged for the activity than existed when the
-// commentary was generated. The math lives here as a small pure function so it
-// can be unit-tested and shared by client (button label) and server (route).
+// View 5 shows a SINGLE commentary covering the whole tournament (all
+// activities, all players), stored in the single-row `tournament_commentary`
+// table. The commentary auto-regenerates whenever a new game is logged.
+//
+// A cached commentary is "stale" — and the UI shows a fallback Refresh control —
+// when more non-excluded games exist now than existed when it was generated
+// (e.g. after an exclude/include toggle, which is not a new-game insert). The
+// math lives here as small pure functions so it can be unit-tested and shared by
+// client (stale indicator) and server (route).
 
-import type { Commentary, Game, Player, RatingInfo } from "./types";
+import type { Game, Player, RatingInfo, TournamentCommentary } from "./types";
 
 /**
- * Count of non-excluded games for a single activity. This is the number stored
- * as `commentary.games_at_generation` when commentary is generated, and the
- * number compared against to decide staleness.
+ * Total count of non-excluded games across ALL activities. This is the number
+ * stored as `tournament_commentary.games_at_generation` when commentary is
+ * generated, and the number compared against to decide staleness.
  */
-export function nonExcludedGameCount(games: Game[], activityId: string): number {
-  return games.filter((g) => g.activity_id === activityId && !g.excluded).length;
+export function totalNonExcludedGameCount(games: Game[]): number {
+  return games.filter((g) => !g.excluded).length;
 }
 
 /**
- * True when cached commentary is stale relative to the current game count.
+ * True when the cached unified commentary is stale relative to the current total
+ * non-excluded game count.
  *
- * Stale means: `commentary.games_at_generation` is strictly less than the
- * current count of non-excluded games for that activity (CLAUDE.md §5). If
- * there is no commentary yet, it is NOT "stale" — the UI shows "Generate", not
- * "Regenerate". An equal count is fresh.
+ * Stale means: `tournament_commentary.games_at_generation` is strictly less than
+ * the current total count of non-excluded games. If there is no commentary yet,
+ * it is NOT "stale" — the UI shows an empty state with "Generate", not a stale
+ * indicator. An equal count is fresh. A higher generation count (e.g. games
+ * excluded since) is also not stale.
  */
 export function isCommentaryStale(
-  commentary: Pick<Commentary, "games_at_generation"> | null | undefined,
-  currentGameCount: number,
+  commentary: Pick<TournamentCommentary, "games_at_generation"> | null | undefined,
+  totalGameCount: number,
 ): boolean {
   if (!commentary) return false;
-  return commentary.games_at_generation < currentGameCount;
+  return commentary.games_at_generation < totalGameCount;
 }
 
 /**
- * Build the Claude prompt for an activity (CLAUDE.md §5 prompt template).
- *
- * Standings are derived from the global ratings (computed via the elo engine,
- * never stored) restricted to players who have actually played this activity,
- * paired with their W/L in this activity. Recent results are the last 10
- * non-excluded games for the activity, newest first.
+ * Overall tournament standings for the prompt: every player who has appeared in
+ * a non-excluded game (in any activity), with their GLOBAL elo rating (from the
+ * supplied ratings map — computed, never stored) and their overall W/L across
+ * all activities. Sorted by rating desc, then wins desc, then name for
+ * stability.
  */
-export function buildCommentaryPrompt(input: {
-  activityName: string;
-  standings: {
-    name: string;
-    rating: number;
-    wins: number;
-    losses: number;
-  }[];
-  recentGames: {
-    winners: string[];
-    losers: string[];
-    isDoubles: boolean;
-  }[];
-}): string {
-  const standingsText =
-    input.standings.length > 0
-      ? input.standings
-          .map(
-            (s, i) =>
-              `${i + 1}. ${s.name} — rating ${Math.round(s.rating)}, ${s.wins}W/${s.losses}L`,
-          )
-          .join("\n")
-      : "(no games played yet)";
-
-  const recentText =
-    input.recentGames.length > 0
-      ? input.recentGames
-          .map((g, i) => {
-            const w = g.winners.join(" & ");
-            const l = g.losers.join(" & ");
-            const kind = g.isDoubles ? "doubles" : "singles";
-            return `${i + 1}. ${w} beat ${l} (${kind})`;
-          })
-          .join("\n")
-      : "(no recent results)";
-
-  return [
-    `You are a snarky but affectionate sports commentator covering "LFG Olympics", a family-weekend lawn-games tournament.`,
-    ``,
-    `Activity: ${input.activityName}.`,
-    ``,
-    `Current standings (rating + win/loss in this activity):`,
-    standingsText,
-    ``,
-    `Recent results (newest first):`,
-    recentText,
-    ``,
-    `Write 3–4 sentences of fun, irreverent commentary. Call out specific players by name. Don't be mean-spirited. Output only the commentary text, no preamble.`,
-  ].join("\n");
-}
-
-/**
- * Compute per-activity standings for the prompt: players who have appeared in a
- * non-excluded game for the activity, with their GLOBAL elo rating (from the
- * supplied ratings map — computed, never stored) and their W/L within the
- * activity. Sorted by rating desc, then wins desc, then name for stability.
- */
-export function activityStandings(
+export function overallStandings(
   games: Game[],
   players: Player[],
   ratings: Map<string, RatingInfo>,
-  activityId: string,
 ): { name: string; rating: number; wins: number; losses: number }[] {
   const nameOf = new Map(players.map((p) => [p.id, p.name]));
   const wins = new Map<string, number>();
@@ -110,7 +57,7 @@ export function activityStandings(
   const seen = new Set<string>();
 
   for (const g of games) {
-    if (g.activity_id !== activityId || g.excluded) continue;
+    if (g.excluded) continue;
     for (const id of g.winner_ids) {
       wins.set(id, (wins.get(id) ?? 0) + 1);
       seen.add(id);
@@ -137,19 +84,20 @@ export function activityStandings(
 }
 
 /**
- * The last N non-excluded games for an activity, newest first (played_at DESC,
- * then created_at DESC for deterministic tie-breaking), mapped to display names.
+ * The last N non-excluded games across ALL activities, newest first (played_at
+ * DESC, then created_at DESC for deterministic tie-breaking), mapped to display
+ * names and tagged with their activity name.
  */
 export function recentGamesForPrompt(
   games: Game[],
   players: Player[],
-  activityId: string,
+  activityNameById: Map<string, string>,
   limit = 10,
-): { winners: string[]; losers: string[]; isDoubles: boolean }[] {
+): { activity: string; winners: string[]; losers: string[]; isDoubles: boolean }[] {
   const nameOf = new Map(players.map((p) => [p.id, p.name]));
   const name = (id: string) => nameOf.get(id) ?? "Unknown";
   return games
-    .filter((g) => g.activity_id === activityId && !g.excluded)
+    .filter((g) => !g.excluded)
     .sort((a, b) => {
       const pa = b.played_at.localeCompare(a.played_at);
       if (pa !== 0) return pa;
@@ -157,8 +105,63 @@ export function recentGamesForPrompt(
     })
     .slice(0, limit)
     .map((g) => ({
+      activity: activityNameById.get(g.activity_id) ?? "Unknown",
       winners: g.winner_ids.map(name),
       losers: g.loser_ids.map(name),
       isDoubles: g.is_doubles,
     }));
+}
+
+/**
+ * Build the unified Claude prompt for the whole tournament (CLAUDE.md §5 prompt
+ * template). Standings are the overall standings; recent results span all
+ * activities, newest first, each tagged with its activity.
+ */
+export function buildCommentaryPrompt(input: {
+  standings: {
+    name: string;
+    rating: number;
+    wins: number;
+    losses: number;
+  }[];
+  recentGames: {
+    activity: string;
+    winners: string[];
+    losers: string[];
+    isDoubles: boolean;
+  }[];
+}): string {
+  const standingsText =
+    input.standings.length > 0
+      ? input.standings
+          .map(
+            (s, i) =>
+              `${i + 1}. ${s.name} — rating ${Math.round(s.rating)}, ${s.wins}W/${s.losses}L`,
+          )
+          .join("\n")
+      : "(no games played yet)";
+
+  const recentText =
+    input.recentGames.length > 0
+      ? input.recentGames
+          .map((g, i) => {
+            const w = g.winners.join(" & ");
+            const l = g.losers.join(" & ");
+            const kind = g.isDoubles ? "doubles" : "singles";
+            return `${i + 1}. [${g.activity}] ${w} beat ${l} (${kind})`;
+          })
+          .join("\n")
+      : "(no recent results)";
+
+  return [
+    `You are a snarky but affectionate sports commentator covering "LFG Olympics", a family-weekend lawn-games tournament spanning several lawn games.`,
+    ``,
+    `Current overall standings (global rating + total win/loss across all activities):`,
+    standingsText,
+    ``,
+    `Recent results across all activities (newest first):`,
+    recentText,
+    ``,
+    `Write 3–4 sentences of fun, irreverent commentary on the tournament as a whole. Call out specific players by name. Don't be mean-spirited. Output only the commentary text, no preamble.`,
+  ].join("\n");
 }

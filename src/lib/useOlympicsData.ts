@@ -2,13 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "./supabase";
-import type { Activity, Commentary, Game, Player } from "./types";
+import type {
+  Activity,
+  Game,
+  Player,
+  TournamentCommentary,
+} from "./types";
 
 export type OlympicsData = {
   players: Player[];
   activities: Activity[];
   games: Game[];
-  commentary: Commentary[];
+  commentary: TournamentCommentary | null;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -24,7 +29,9 @@ export function useOlympicsData(): OlympicsData {
   const [players, setPlayers] = useState<Player[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [games, setGames] = useState<Game[]>([]);
-  const [commentary, setCommentary] = useState<Commentary[]>([]);
+  const [commentary, setCommentary] = useState<TournamentCommentary | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +41,9 @@ export function useOlympicsData(): OlympicsData {
       supabase.from("players").select("*").order("created_at"),
       supabase.from("activities").select("*").order("name"),
       supabase.from("games").select("*"),
-      supabase.from("commentary").select("*"),
+      // Single-row unified commentary (id = 1). maybeSingle() tolerates the
+      // empty state (no row yet) without surfacing an error.
+      supabase.from("tournament_commentary").select("*").eq("id", 1).maybeSingle(),
     ]);
     if (p.error || a.error || g.error || c.error) {
       setError(
@@ -49,7 +58,7 @@ export function useOlympicsData(): OlympicsData {
     setPlayers((p.data ?? []) as Player[]);
     setActivities((a.data ?? []) as Activity[]);
     setGames((g.data ?? []) as Game[]);
-    setCommentary((c.data ?? []) as Commentary[]);
+    setCommentary((c.data as TournamentCommentary | null) ?? null);
   }, []);
 
   useEffect(() => {

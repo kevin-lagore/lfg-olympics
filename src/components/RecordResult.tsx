@@ -146,6 +146,14 @@ export function RecordResult({
         return;
       }
 
+      // Primary regeneration trigger (CLAUDE.md §5 View 5): after a successful
+      // game insert, fire a background regeneration of the unified tournament
+      // commentary. Fire-and-forget — never block the toast or make the user
+      // wait; swallow/log errors quietly.
+      void fetch("/api/commentary", { method: "POST" }).catch((e) => {
+        console.warn("Background commentary regeneration failed", e);
+      });
+
       // Compute the winner's delta for the toast by replaying with the new game
       // appended (optimistic — realtime will refresh shortly anyway).
       const provisional: Game = {

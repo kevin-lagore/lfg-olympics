@@ -1,4 +1,4 @@
-// POST /api/commentary/[activityId] — generate & cache LLM commentary.
+// POST /api/commentary — generate & cache the UNIFIED tournament commentary.
 //
 // SERVER-ONLY route handler (CLAUDE.md §5 View 5). The Anthropic SDK and
 // ANTHROPIC_API_KEY are used here only; the key is NOT prefixed NEXT_PUBLIC_ and
@@ -7,16 +7,20 @@
 //
 // Standings are computed via the shared elo engine (computeRatings) — ratings
 // are never stored (§2). We only persist the generated text + the count of
-// non-excluded games at generation time, used for the staleness check.
+// non-excluded games (across ALL activities) at generation time, used for the
+// staleness check.
+//
+// This is the primary regeneration path: the Record Result flow (View 2) fires
+// a background POST here after every successful game insert.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { computeRatings } from "@/lib/elo";
 import {
-  activityStandings,
   buildCommentaryPrompt,
-  nonExcludedGameCount,
+  overallStandings,
   recentGamesForPrompt,
+  totalNonExcludedGameCount,
 } from "@/lib/commentary";
 import type { Activity, Game, Player } from "@/lib/types";
 
@@ -25,6 +29,7 @@ export const dynamic = "force-dynamic";
 
 const MODEL = "claude-sonnet-4-6";
 const API_TIMEOUT_MS = 15_000;
+const TOURNAMENT_COMMENTARY_ID = 1;
 
 function supabaseServer() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -38,12 +43,7 @@ function supabaseServer() {
   });
 }
 
-export async function POST(
-  _req: Request,
-  ctx: RouteContext<"/api/commentary/[activityId]">,
-) {
-  const { activityId } = await ctx.params;
-
+export async function POST() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return Response.json(
@@ -62,39 +62,33 @@ export async function POST(
     );
   }
 
-  // 1. Fetch the activity, its games, and all players (for standings + names).
-  const [activityRes, gamesRes, playersRes] = await Promise.all([
-    supabase.from("activities").select("*").eq("id", activityId).single(),
-    supabase.from("games").select("*").eq("activity_id", activityId),
+  // 1. Fetch ALL games, all activities (for names), and all players (standings).
+  const [gamesRes, activitiesRes, playersRes] = await Promise.all([
+    supabase.from("games").select("*"),
+    supabase.from("activities").select("*"),
     supabase.from("players").select("*"),
   ]);
 
-  if (activityRes.error || !activityRes.data) {
-    return Response.json({ error: "Activity not found." }, { status: 404 });
-  }
-  if (gamesRes.error || playersRes.error) {
+  if (gamesRes.error || activitiesRes.error || playersRes.error) {
     return Response.json(
-      { error: "Failed to load games or players." },
+      { error: "Failed to load games, activities, or players." },
       { status: 500 },
     );
   }
 
-  const activity = activityRes.data as Activity;
   const games = (gamesRes.data ?? []) as Game[];
+  const activities = (activitiesRes.data ?? []) as Activity[];
   const players = (playersRes.data ?? []) as Player[];
 
-  const count = nonExcludedGameCount(games, activityId);
+  const count = totalNonExcludedGameCount(games);
 
-  // 2. Build the prompt. Standings use the global elo ratings (computed, never
-  //    stored) restricted to players who appear in this activity's games.
+  // 2. Build the unified prompt. Standings use the global elo ratings (computed,
+  //    never stored). Recent games span all activities, newest first.
   const ratings = computeRatings(games, players);
-  const standings = activityStandings(games, players, ratings, activityId);
-  const recentGames = recentGamesForPrompt(games, players, activityId, 10);
-  const prompt = buildCommentaryPrompt({
-    activityName: activity.name,
-    standings,
-    recentGames,
-  });
+  const standings = overallStandings(games, players, ratings);
+  const activityNameById = new Map(activities.map((a) => [a.id, a.name]));
+  const recentGames = recentGamesForPrompt(games, players, activityNameById, 10);
+  const prompt = buildCommentaryPrompt({ standings, recentGames });
 
   // 3. Call Claude Sonnet with a hard 15s timeout.
   const anthropic = new Anthropic({ apiKey });
@@ -123,16 +117,19 @@ export async function POST(
     );
   }
 
-  // 4. Upsert the commentary with the current non-excluded game count.
-  const { error: upsertError } = await supabase.from("commentary").upsert(
-    {
-      activity_id: activityId,
-      content,
-      games_at_generation: count,
-      generated_at: new Date().toISOString(),
-    },
-    { onConflict: "activity_id" },
-  );
+  // 4. Upsert the single tournament_commentary row (id = 1) with the current
+  //    total non-excluded game count.
+  const { error: upsertError } = await supabase
+    .from("tournament_commentary")
+    .upsert(
+      {
+        id: TOURNAMENT_COMMENTARY_ID,
+        content,
+        games_at_generation: count,
+        generated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    );
 
   if (upsertError) {
     return Response.json(

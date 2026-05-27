@@ -60,7 +60,6 @@ export default function Home() {
         )}
         {tab === "commentary" && (
           <Commentary
-            activities={activities}
             games={games}
             commentary={commentary}
             loading={loading}
