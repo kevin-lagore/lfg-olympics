@@ -6,20 +6,12 @@ import { Leaderboard } from "@/components/Leaderboard";
 import { RecordResult } from "@/components/RecordResult";
 import { History } from "@/components/History";
 import { ActivityStats } from "@/components/ActivityStats";
+import { Commentary } from "@/components/Commentary";
 import { useOlympicsData } from "@/lib/useOlympicsData";
-
-function ComingSoon({ title }: { title: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-24 text-center">
-      <h1 className="text-2xl font-bold">{title}</h1>
-      <p className="text-muted-foreground">Coming soon.</p>
-    </div>
-  );
-}
 
 export default function Home() {
   const [tab, setTab] = useState<TabKey>("leaderboard");
-  const { players, activities, games, loading, error, refresh } =
+  const { players, activities, games, commentary, loading, error, refresh } =
     useOlympicsData();
 
   return (
@@ -66,7 +58,15 @@ export default function Home() {
             loading={loading}
           />
         )}
-        {tab === "commentary" && <ComingSoon title="Commentary" />}
+        {tab === "commentary" && (
+          <Commentary
+            activities={activities}
+            games={games}
+            commentary={commentary}
+            loading={loading}
+            onRefresh={refresh}
+          />
+        )}
       </main>
 
       <BottomTabBar active={tab} onChange={setTab} />
