@@ -62,12 +62,22 @@ export function RecordResult({
   activities,
   games,
   onRefresh,
+  onGameLogged,
 }: {
   players: Player[];
   activities: Activity[];
   games: Game[];
   loading: boolean;
   onRefresh: () => Promise<void>;
+  /**
+   * Called after a successful game insert. Fires the unified-commentary
+   * regeneration (POST) centrally and, once it resolves, refetches so the fresh
+   * commentary lands in shared state — while exposing a shared "regenerating"
+   * flag the Commentary view shows as "updating…". Non-blocking: returns
+   * immediately so the success toast and the instant leaderboard/history refresh
+   * are never delayed (CLAUDE.md §5 View 5).
+   */
+  onGameLogged: () => void;
 }) {
   const activePlayers = useMemo(
     () => players.filter((p) => p.active),
@@ -148,11 +158,12 @@ export function RecordResult({
 
       // Primary regeneration trigger (CLAUDE.md §5 View 5): after a successful
       // game insert, fire a background regeneration of the unified tournament
-      // commentary. Fire-and-forget — never block the toast or make the user
-      // wait; swallow/log errors quietly.
-      void fetch("/api/commentary", { method: "POST" }).catch((e) => {
-        console.warn("Background commentary regeneration failed", e);
-      });
+      // commentary. This is centralized in the shared data layer so it raises a
+      // shared "updating…" flag for the Commentary view AND refetches once the
+      // new row is written (~3s later) — so the commentary updates automatically
+      // with no manual refresh. Non-blocking: never delays the toast or the
+      // instant leaderboard/history refresh below; errors quiet-fail.
+      onGameLogged();
 
       // Compute the winner's delta for the toast by replaying with the new game
       // appended (optimistic — realtime will refresh shortly anyway).

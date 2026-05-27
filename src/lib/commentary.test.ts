@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   isCommentaryStale,
   totalNonExcludedGameCount,
   overallStandings,
   recentGamesForPrompt,
   buildCommentaryPrompt,
+  runCommentaryRegeneration,
 } from "./commentary";
 import { computeRatings } from "./elo";
 import type { Game, Player } from "./types";
@@ -197,5 +198,118 @@ describe("buildCommentaryPrompt", () => {
     });
     expect(prompt).toContain("(no games played yet)");
     expect(prompt).toContain("(no recent results)");
+  });
+});
+
+describe("runCommentaryRegeneration", () => {
+  function harness() {
+    let flag = false;
+    const calls: string[] = [];
+    return {
+      calls,
+      isInFlight: () => flag,
+      setInFlight: (v: boolean) => {
+        flag = v;
+      },
+      setRegenerating: vi.fn((v: boolean) =>
+        calls.push(v ? "regenerating:on" : "regenerating:off"),
+      ),
+    };
+  }
+
+  it("posts, then refetches on success, then clears the flag (in that order)", async () => {
+    const h = harness();
+    const post = vi.fn(async () => {
+      h.calls.push("post");
+    });
+    const refresh = vi.fn(async () => {
+      h.calls.push("refresh");
+    });
+
+    await runCommentaryRegeneration({
+      isInFlight: h.isInFlight,
+      setInFlight: h.setInFlight,
+      setRegenerating: h.setRegenerating,
+      post,
+      refresh,
+    });
+
+    expect(post).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
+    // Flag on before post, refetch after post, flag off only after refresh.
+    expect(h.calls).toEqual([
+      "regenerating:on",
+      "post",
+      "refresh",
+      "regenerating:off",
+    ]);
+    expect(h.isInFlight()).toBe(false);
+  });
+
+  it("still refetches and clears the flag when the POST fails (e.g. 503 / network)", async () => {
+    const h = harness();
+    const post = vi.fn(async () => {
+      throw new Error("503");
+    });
+    const refresh = vi.fn(async () => {});
+    const onError = vi.fn();
+
+    await runCommentaryRegeneration({
+      isInFlight: h.isInFlight,
+      setInFlight: h.setInFlight,
+      setRegenerating: h.setRegenerating,
+      post,
+      refresh,
+      onError,
+    });
+
+    // The refetch-on-completion wiring runs regardless of the POST outcome —
+    // this is what makes the Commentary view converge whether the LLM call
+    // returns real text or hits the no-API-key error path.
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(h.setRegenerating).toHaveBeenLastCalledWith(false);
+    expect(h.isInFlight()).toBe(false);
+  });
+
+  it("coalesces: a call while one is in flight is a no-op", async () => {
+    const h = harness();
+    // Simulate an in-flight regeneration.
+    h.setInFlight(true);
+    const post = vi.fn(async () => {});
+    const refresh = vi.fn(async () => {});
+
+    await runCommentaryRegeneration({
+      isInFlight: h.isInFlight,
+      setInFlight: h.setInFlight,
+      setRegenerating: h.setRegenerating,
+      post,
+      refresh,
+    });
+
+    expect(post).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(h.setRegenerating).not.toHaveBeenCalled();
+  });
+
+  it("clears the flag even if the refetch itself throws", async () => {
+    const h = harness();
+    const post = vi.fn(async () => {});
+    const refresh = vi.fn(async () => {
+      throw new Error("refetch failed");
+    });
+    const onError = vi.fn();
+
+    await runCommentaryRegeneration({
+      isInFlight: h.isInFlight,
+      setInFlight: h.setInFlight,
+      setRegenerating: h.setRegenerating,
+      post,
+      refresh,
+      onError,
+    });
+
+    expect(h.setRegenerating).toHaveBeenLastCalledWith(false);
+    expect(h.isInFlight()).toBe(false);
   });
 });

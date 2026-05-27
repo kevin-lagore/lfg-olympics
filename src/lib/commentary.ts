@@ -13,6 +13,49 @@
 import type { Game, Player, RatingInfo, TournamentCommentary } from "./types";
 
 /**
+ * Orchestrates a single new-game-triggered commentary regeneration so the UI
+ * converges automatically (CLAUDE.md §5 View 5). Pure/injectable so the
+ * ordering contract is unit-testable without React or network:
+ *
+ *  1. Raises the "regenerating" flag (so the Commentary view shows "updating…").
+ *  2. POSTs to regenerate. The server writes the new row (~3s, the Claude call).
+ *  3. On settle — SUCCESS OR ERROR — refetches so the freshly-written row lands
+ *     in shared state, THEN lowers the flag. Refetching even on the error path
+ *     (e.g. missing API key -> 503) is harmless and keeps the view consistent.
+ *  4. Coalesces: if a regeneration is already in flight, the call is a no-op
+ *     (the in-flight POST sees the latest server state; one refetch follows).
+ *
+ * Returns immediately (the returned promise is for tests/awaiting; callers fire
+ * it non-blocking). Errors from `post` quiet-fail via `onError`.
+ */
+export async function runCommentaryRegeneration(deps: {
+  isInFlight: () => boolean;
+  setInFlight: (v: boolean) => void;
+  setRegenerating: (v: boolean) => void;
+  post: () => Promise<unknown>;
+  refresh: () => Promise<void>;
+  onError?: (e: unknown) => void;
+}): Promise<void> {
+  if (deps.isInFlight()) return;
+  deps.setInFlight(true);
+  deps.setRegenerating(true);
+  try {
+    await deps.post();
+  } catch (e) {
+    deps.onError?.(e);
+  } finally {
+    try {
+      await deps.refresh();
+    } catch (e) {
+      deps.onError?.(e);
+    } finally {
+      deps.setInFlight(false);
+      deps.setRegenerating(false);
+    }
+  }
+}
+
+/**
  * Total count of non-excluded games across ALL activities. This is the number
  * stored as `tournament_commentary.games_at_generation` when commentary is
  * generated, and the number compared against to decide staleness.

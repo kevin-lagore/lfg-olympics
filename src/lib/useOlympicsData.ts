@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
+import { runCommentaryRegeneration } from "./commentary";
 import type {
   Activity,
   Game,
@@ -17,6 +18,21 @@ export type OlympicsData = {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+  /**
+   * True while a new-game-triggered commentary regeneration POST is in flight
+   * (the ~3s Claude call). The Commentary view surfaces this as an "updating…"
+   * indicator so the gap between logging a game and the fresh text landing looks
+   * intentional rather than broken (CLAUDE.md §5 View 5).
+   */
+  regenerating: boolean;
+  /**
+   * Fire the unified-commentary regeneration (POST /api/commentary) and, once it
+   * resolves, refetch so the freshly-written row lands in shared state and the
+   * Commentary view updates automatically — no manual Refresh, no page reload.
+   * Non-blocking: returns immediately; never throws (errors quiet-fail). Call
+   * this after a successful game insert.
+   */
+  regenerateCommentary: () => void;
 };
 
 /**
@@ -34,6 +50,11 @@ export function useOlympicsData(): OlympicsData {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  // Coalesce rapid logs: if several games are recorded while a regeneration is
+  // already in flight, we don't fire overlapping POSTs — the in-flight call will
+  // pick up the latest game state on the server, and we refetch once it lands.
+  const inFlight = useRef(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -61,6 +82,29 @@ export function useOlympicsData(): OlympicsData {
     setCommentary((c.data as TournamentCommentary | null) ?? null);
   }, []);
 
+  /**
+   * Trigger a background regeneration of the unified commentary, then refetch so
+   * the new row lands in shared state. Non-blocking and quiet-failing: the
+   * regenerating flag is raised while the POST is in flight and lowered when it
+   * settles (success OR error), and we always refetch on completion so the
+   * Commentary view converges to whatever the server persisted. On the error
+   * path (e.g. no ANTHROPIC_API_KEY -> 503), no new row is written; the refetch
+   * is harmless and the existing stale-fallback still applies.
+   */
+  const regenerateCommentary = useCallback(() => {
+    void runCommentaryRegeneration({
+      isInFlight: () => inFlight.current,
+      setInFlight: (v) => {
+        inFlight.current = v;
+      },
+      setRegenerating,
+      post: () => fetch("/api/commentary", { method: "POST" }),
+      refresh,
+      onError: (e) =>
+        console.warn("Background commentary regeneration failed", e),
+    });
+  }, [refresh]);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -86,5 +130,15 @@ export function useOlympicsData(): OlympicsData {
     };
   }, [refresh]);
 
-  return { players, activities, games, commentary, loading, error, refresh };
+  return {
+    players,
+    activities,
+    games,
+    commentary,
+    loading,
+    error,
+    refresh,
+    regenerating,
+    regenerateCommentary,
+  };
 }

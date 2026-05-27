@@ -11,8 +11,17 @@ import { useOlympicsData } from "@/lib/useOlympicsData";
 
 export default function Home() {
   const [tab, setTab] = useState<TabKey>("leaderboard");
-  const { players, activities, games, commentary, loading, error, refresh } =
-    useOlympicsData();
+  const {
+    players,
+    activities,
+    games,
+    commentary,
+    loading,
+    error,
+    refresh,
+    regenerating,
+    regenerateCommentary,
+  } = useOlympicsData();
 
   return (
     <>
@@ -39,6 +48,7 @@ export default function Home() {
             games={games}
             loading={loading}
             onRefresh={refresh}
+            onGameLogged={regenerateCommentary}
           />
         )}
         {tab === "history" && (
@@ -64,6 +74,7 @@ export default function Home() {
             commentary={commentary}
             loading={loading}
             onRefresh={refresh}
+            regenerating={regenerating}
           />
         )}
       </main>

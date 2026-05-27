@@ -35,11 +35,18 @@ export function Commentary({
   commentary,
   loading,
   onRefresh,
+  regenerating = false,
 }: {
   games: Game[];
   commentary: TournamentCommentary | null;
   loading: boolean;
   onRefresh: () => Promise<void>;
+  /**
+   * True while a new-game-triggered regeneration is in flight (lifted from the
+   * shared data layer). Shows a subtle "updating…" indicator over the existing
+   * commentary until the fresh text arrives, so the ~3s gap looks intentional.
+   */
+  regenerating?: boolean;
 }) {
   const [generating, setGenerating] = useState(false);
   // Locally generated content shows immediately even before the refresh
@@ -56,6 +63,9 @@ export function Commentary({
   const totalGameCount = totalNonExcludedGameCount(games);
   const content = localContent ?? commentary?.content ?? null;
   const hasContent = content !== null;
+  // A regeneration is "in flight" either from the manual Refresh button
+  // (`generating`) or from a freshly logged game (shared `regenerating` flag).
+  const busy = generating || regenerating;
   // Staleness is a fallback indicator: shown only against the persisted row, and
   // only when we haven't just regenerated locally.
   const stale =
@@ -112,14 +122,14 @@ export function Commentary({
                 size="sm"
                 variant="outline"
                 onClick={regenerate}
-                disabled={generating}
+                disabled={busy}
               >
-                {generating ? (
+                {busy ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <RefreshCw className="size-4" />
                 )}
-                {generating ? "Refreshing…" : "Refresh"}
+                {busy ? "Refreshing…" : "Refresh"}
               </Button>
             )}
           </CardHeader>
@@ -127,12 +137,20 @@ export function Commentary({
             {hasContent ? (
               <>
                 <p className="text-sm leading-relaxed">{content}</p>
-                {commentary?.generated_at && localContent === null && (
-                  <p className="text-xs text-muted-foreground">
-                    Updated {relativeTime(commentary.generated_at, now)}
+                {busy ? (
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    Updating commentary…
                   </p>
+                ) : (
+                  commentary?.generated_at &&
+                  localContent === null && (
+                    <p className="text-xs text-muted-foreground">
+                      Updated {relativeTime(commentary.generated_at, now)}
+                    </p>
+                  )
                 )}
-                {stale && (
+                {!busy && stale && (
                   <p className="text-xs font-medium text-amber-600">
                     Games have changed since this was written — Refresh for the
                     latest.
@@ -148,14 +166,14 @@ export function Commentary({
                 </p>
                 <Button
                   onClick={regenerate}
-                  disabled={generating || totalGameCount === 0}
+                  disabled={busy || totalGameCount === 0}
                 >
-                  {generating ? (
+                  {busy ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
                     <Sparkles className="size-4" />
                   )}
-                  {generating ? "Generating…" : "Generate"}
+                  {busy ? "Generating…" : "Generate"}
                 </Button>
               </div>
             )}
