@@ -1,13 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, Trophy } from "lucide-react";
 import { computeRatings } from "@/lib/elo";
 import type { Activity, Game, Player } from "@/lib/types";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { AnimatedRating } from "@/components/AnimatedRating";
+import { ShareButton } from "@/components/ShareButton";
+import { EmptyState } from "@/components/EmptyState";
+
+/** How long a row stays flashed green/red after its rating changes. */
+const FLASH_MS = 900;
 
 type Row = {
   player: Player;
@@ -53,6 +59,39 @@ export function Leaderboard({
     return { min: Math.min(...values), max: Math.max(...values) };
   }, [rows]);
 
+  // Row flash on rating change: compare each player's rating to what it was on
+  // the previous render. A change (e.g. after a realtime update) flashes the row
+  // green (gain) or red (loss) for FLASH_MS, then clears.
+  const prevRatings = useRef<Map<string, number>>(new Map());
+  const [flash, setFlash] = useState<Record<string, "up" | "down">>({});
+
+  useEffect(() => {
+    const prev = prevRatings.current;
+    const next = new Map<string, number>();
+    const changed: Record<string, "up" | "down"> = {};
+    for (const row of rows) {
+      const before = prev.get(row.player.id);
+      next.set(row.player.id, row.rating);
+      if (before !== undefined && Math.round(before) !== Math.round(row.rating)) {
+        changed[row.player.id] = row.rating > before ? "up" : "down";
+      }
+    }
+    prevRatings.current = next;
+
+    // First render (empty prev map) seeds baselines without flashing.
+    if (prev.size === 0 || Object.keys(changed).length === 0) return;
+
+    setFlash((f) => ({ ...f, ...changed }));
+    const t = setTimeout(() => {
+      setFlash((f) => {
+        const rest = { ...f };
+        for (const id of Object.keys(changed)) delete rest[id];
+        return rest;
+      });
+    }, FLASH_MS);
+    return () => clearTimeout(t);
+  }, [rows]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
@@ -66,14 +105,17 @@ export function Leaderboard({
     <div className="flex flex-col gap-4">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Leaderboard</h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleRefresh}
-          aria-label="Refresh"
-        >
-          <RefreshCw className={cn("size-5", refreshing && "animate-spin")} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <ShareButton />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleRefresh}
+            aria-label="Refresh"
+          >
+            <RefreshCw className={cn("size-5", refreshing && "animate-spin")} />
+          </Button>
+        </div>
       </header>
 
       <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-background/95 py-2 backdrop-blur">
@@ -86,9 +128,19 @@ export function Leaderboard({
       {loading ? (
         <p className="py-12 text-center text-muted-foreground">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="py-12 text-center text-muted-foreground">
-          No players yet. Add some on the Record tab (or visit /seed).
-        </p>
+        <EmptyState
+          icon={<Trophy className="size-8" />}
+          title={
+            activeOnly && players.length > 0
+              ? "No active players"
+              : "No players yet"
+          }
+          hint={
+            activeOnly && players.length > 0
+              ? "Turn off “Active only” to see everyone, or add players on the Record tab."
+              : "Add some on the Record tab (or visit /seed) to get the rankings going."
+          }
+        />
       ) : (
         <ol className="flex flex-col gap-2">
           {rows.map((row, i) => {
@@ -98,7 +150,12 @@ export function Leaderboard({
             return (
               <li
                 key={row.player.id}
-                className="rounded-xl border bg-card p-3 shadow-sm"
+                className={cn(
+                  "rounded-xl border bg-card p-3 shadow-sm transition-colors duration-500",
+                  flash[row.player.id] === "up" &&
+                    "border-green-400 bg-green-50",
+                  flash[row.player.id] === "down" && "border-red-400 bg-red-50",
+                )}
               >
                 <div className="flex items-center gap-3">
                   <span className="w-6 text-center text-lg font-bold tabular-nums text-muted-foreground">
@@ -109,9 +166,10 @@ export function Leaderboard({
                       <span className="truncate font-medium">
                         {row.player.name}
                       </span>
-                      <span className="text-2xl font-bold tabular-nums">
-                        {Math.round(row.rating)}
-                      </span>
+                      <AnimatedRating
+                        value={row.rating}
+                        className="text-2xl font-bold tabular-nums"
+                      />
                     </div>
                     <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                       <span>

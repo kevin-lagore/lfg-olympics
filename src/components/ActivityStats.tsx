@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { BarChart3 } from "lucide-react";
 import type { Activity, Game, Player } from "@/lib/types";
+import { EmptyState } from "@/components/EmptyState";
 import {
   activityWithMostGames,
   computeActivityStats,
@@ -102,17 +104,23 @@ export function ActivityStats({
       {loading ? (
         <p className="py-12 text-center text-muted-foreground">Loading…</p>
       ) : activities.length === 0 ? (
-        <p className="py-12 text-center text-muted-foreground">
-          No activities yet. Add one on the Record tab.
-        </p>
+        <EmptyState
+          icon={<BarChart3 className="size-8" />}
+          title="No activities yet"
+          hint="Add one on the Record tab to start tracking per-activity stats."
+        />
       ) : !selected ? (
-        <p className="py-12 text-center text-muted-foreground">
-          Pick an activity to see its stats.
-        </p>
+        <EmptyState
+          icon={<BarChart3 className="size-8" />}
+          title="Pick an activity"
+          hint="Choose an activity above to see its stats."
+        />
       ) : stats.totalGames === 0 ? (
-        <p className="py-12 text-center text-muted-foreground">
-          No games recorded for {selectedActivityName} yet.
-        </p>
+        <EmptyState
+          icon={<BarChart3 className="size-8" />}
+          title={`No games for ${selectedActivityName} yet`}
+          hint="Record a result in this activity and its stats will appear here."
+        />
       ) : (
         <>
           {/* Summary tiles */}

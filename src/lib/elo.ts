@@ -54,6 +54,41 @@ export function gameDelta(
 }
 
 /**
+ * True iff this result is an "upset" / underdog win per CLAUDE.md §4: the
+ * winning side's PRE-game average rating is *strictly lower* than the losing
+ * side's pre-game average rating. This is the exact condition that triggers the
+ * 1.3 underdog multiplier inside `gameDelta`, expressed as a boolean so callers
+ * (e.g. confetti at log time) can detect upsets without re-deriving the math.
+ *
+ * @param winnerRatings pre-game ratings of the winning side (length 1 or 2)
+ * @param loserRatings  pre-game ratings of the losing side (length 1 or 2)
+ */
+export function isUpset(
+  winnerRatings: number[],
+  loserRatings: number[],
+): boolean {
+  return mean(winnerRatings) < mean(loserRatings);
+}
+
+/**
+ * Convenience for the Record flow: given ALL games already loaded on the client
+ * (the same source `computeRatings` replays) plus the winners/losers of a brand
+ * new result, decide whether that new result is an upset. Pre-game ratings are
+ * the CURRENT computed ratings (i.e. the state immediately before the new game),
+ * reusing `computeRatings` so no rating math is duplicated and nothing is cached.
+ */
+export function isUpsetForNewGame(
+  games: Game[],
+  players: Player[],
+  winnerIds: string[],
+  loserIds: string[],
+): boolean {
+  const ratings = computeRatings(games, players);
+  const get = (id: string) => ratings.get(id)?.rating ?? STARTING_RATING;
+  return isUpset(winnerIds.map(get), loserIds.map(get));
+}
+
+/**
  * Replay all games (filtering excluded, sorting deterministically) and return
  * the current rating, non-excluded games played, and last per-game delta for
  * every player.

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, PlusSquare } from "lucide-react";
+import { UserPlus, PlusSquare, ClipboardList } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { computeRatings } from "@/lib/elo";
+import { computeRatings, isUpsetForNewGame } from "@/lib/elo";
+import { fireUpsetConfetti } from "@/lib/confetti";
 import type { Activity, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -26,6 +27,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/EmptyState";
 
 const NONE = "__none__";
 
@@ -61,6 +63,7 @@ export function RecordResult({
   players,
   activities,
   games,
+  loading,
   onRefresh,
   onGameLogged,
 }: {
@@ -84,7 +87,11 @@ export function RecordResult({
     [players],
   );
 
-  const [isDoubles, setIsDoubles] = useState(false);
+  // The user's *desired* doubles toggle. The effective value (used everywhere
+  // below) is forced off when the selected activity is singles-only — derived
+  // during render rather than via a set-state-in-effect, so behaviour is
+  // identical but there is no cascading render.
+  const [doublesWanted, setDoublesWanted] = useState(false);
   const [activityId, setActivityId] = useState("");
   // singles: a, b ; doubles: t1a,t1b vs t2a,t2b
   const [a, setA] = useState("");
@@ -98,12 +105,10 @@ export function RecordResult({
   const selectedActivity = activities.find((x) => x.id === activityId) ?? null;
   const doublesAllowed = selectedActivity?.supports_doubles ?? true;
 
-  // If the selected activity does not support doubles, force singles.
-  useEffect(() => {
-    if (selectedActivity && !selectedActivity.supports_doubles && isDoubles) {
-      setIsDoubles(false);
-    }
-  }, [selectedActivity, isDoubles]);
+  // Effective doubles flag: forced off when the activity is singles-only. This
+  // is derived state (not stored), so picking a singles-only activity instantly
+  // reverts the form to singles with no extra render.
+  const isDoubles = doublesWanted && doublesAllowed;
 
   const playerName = (id: string) =>
     players.find((p) => p.id === id)?.name ?? "?";
@@ -143,6 +148,11 @@ export function RecordResult({
       [winner_ids, loser_ids] = [loser_ids, winner_ids];
     }
 
+    // Detect an upset against the PRE-game ratings (current loaded games, before
+    // this insert). Reuses the elo engine — no rating math duplicated, nothing
+    // cached. CLAUDE.md §4 underdog rule: winners' pre-game avg strictly lower.
+    const upset = isUpsetForNewGame(games, players, winner_ids, loser_ids);
+
     setSubmitting(true);
     try {
       const { error } = await supabase.from("games").insert({
@@ -155,6 +165,10 @@ export function RecordResult({
         toast.error(`Could not record: ${error.message}`);
         return;
       }
+
+      // Celebrate underdog wins with ~2s of confetti (CLAUDE.md §6). Fire-and-
+      // forget; never blocks the toast or refresh.
+      if (upset) void fireUpsetConfetti();
 
       // Primary regeneration trigger (CLAUDE.md §5 View 5): after a successful
       // game insert, fire a background regeneration of the unified tournament
@@ -198,6 +212,11 @@ export function RecordResult({
   const leftLabel = isDoubles ? "Team 1 won" : `${playerName(a) === "?" ? "Player 1" : playerName(a)} won`;
   const rightLabel = isDoubles ? "Team 2 won" : `${playerName(b) === "?" ? "Player 2" : playerName(b)} won`;
 
+  // Recording needs at least one activity and at least two active players. When
+  // setup is incomplete we show an empty state instead of an unusable form (the
+  // Add buttons stay in the header so the user can resolve it in place).
+  const canRecord = activities.length > 0 && activePlayers.length >= 2;
+
   return (
     <div className="flex flex-col gap-5">
       <header className="flex items-center justify-between">
@@ -208,6 +227,22 @@ export function RecordResult({
         </div>
       </header>
 
+      {loading ? (
+        <p className="py-12 text-center text-muted-foreground">Loading…</p>
+      ) : !canRecord ? (
+        <EmptyState
+          icon={<ClipboardList className="size-8" />}
+          title="Setup needed before you can record"
+          hint={
+            activities.length === 0 && activePlayers.length < 2
+              ? "Add at least one activity and two players using the buttons above."
+              : activities.length === 0
+                ? "Add at least one activity using the “Activity” button above."
+                : "Add at least two active players using the “Player” button above."
+          }
+        />
+      ) : (
+        <>
       <div className="flex items-center justify-between rounded-xl border bg-card p-3">
         <Label htmlFor="doubles" className="text-base">
           Doubles?
@@ -216,7 +251,7 @@ export function RecordResult({
           id="doubles"
           checked={isDoubles}
           disabled={!doublesAllowed}
-          onCheckedChange={setIsDoubles}
+          onCheckedChange={setDoublesWanted}
         />
       </div>
       {!doublesAllowed && (
@@ -285,6 +320,8 @@ export function RecordResult({
           {rightLabel}
         </Button>
       </div>
+        </>
+      )}
     </div>
   );
 }

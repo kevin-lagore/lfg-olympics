@@ -4,6 +4,8 @@ import {
   computeGameDeltas,
   gameDelta,
   expectedScore,
+  isUpset,
+  isUpsetForNewGame,
   STARTING_RATING,
   K_FACTOR,
   UNDERDOG_MULTIPLIER,
@@ -239,6 +241,65 @@ describe("gameDelta helper", () => {
 
   it("uses team means for doubles (matches §4 upset example -> 63)", () => {
     expect(Math.round(gameDelta([1400, 1400], [1600, 1600]))).toBe(63);
+  });
+});
+
+// --- isUpset / isUpsetForNewGame ------------------------------------------
+
+describe("isUpset", () => {
+  it("true when winners' pre-game average is strictly lower (singles)", () => {
+    expect(isUpset([1300], [1700])).toBe(true);
+  });
+
+  it("false when winners' average is higher", () => {
+    expect(isUpset([1700], [1300])).toBe(false);
+  });
+
+  it("false on an exact tie (strictly lower, not <=)", () => {
+    expect(isUpset([1500], [1500])).toBe(false);
+  });
+
+  it("uses team means for doubles", () => {
+    // winners avg 1400 < losers avg 1600 -> upset.
+    expect(isUpset([1300, 1500], [1550, 1650])).toBe(true);
+    // winners avg 1600 > losers avg 1400 -> not an upset.
+    expect(isUpset([1550, 1650], [1300, 1500])).toBe(false);
+  });
+
+  it("agrees with gameDelta's multiplier: upset iff delta is multiplied", () => {
+    const w = [1300];
+    const l = [1700];
+    const multiplied = gameDelta(w, l);
+    const base = K_FACTOR * (1 - expectedScore(1300, 1700));
+    // When isUpset is true, gameDelta applied the ×1.3 multiplier.
+    expect(isUpset(w, l)).toBe(true);
+    expect(multiplied).toBeCloseTo(base * UNDERDOG_MULTIPLIER, 6);
+  });
+});
+
+describe("isUpsetForNewGame", () => {
+  it("detects an upset using current computed ratings as the pre-game state", () => {
+    seq = 500;
+    const players = [player("A"), player("B")];
+    // B beats A first -> A=1468, B=1532. A is now the underdog.
+    const g1 = game(["B"], ["A"]);
+    // New (not-yet-logged) game: A beats B -> upset.
+    expect(isUpsetForNewGame([g1], players, ["A"], ["B"])).toBe(true);
+    // Reverse winner/loser: B beats A -> favourite wins, not an upset.
+    expect(isUpsetForNewGame([g1], players, ["B"], ["A"])).toBe(false);
+  });
+
+  it("treats unknown / first-time players as starting rating (no upset on equal start)", () => {
+    const players = [player("A"), player("B")];
+    expect(isUpsetForNewGame([], players, ["A"], ["B"])).toBe(false);
+  });
+
+  it("ignores excluded games when computing pre-game ratings", () => {
+    seq = 520;
+    const players = [player("A"), player("B")];
+    // The only game is excluded, so ratings stay equal -> no upset either way.
+    const g1 = game(["B"], ["A"], { excluded: true });
+    expect(isUpsetForNewGame([g1], players, ["A"], ["B"])).toBe(false);
   });
 });
 

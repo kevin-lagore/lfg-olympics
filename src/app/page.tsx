@@ -27,9 +27,21 @@ export default function Home() {
     <>
       <main className="mx-auto w-full max-w-[480px] flex-1 px-4 pb-24 pt-4">
         {error && (
-          <p className="mb-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-            {error}
-          </p>
+          <div className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+            <div className="min-w-0">
+              <p className="font-medium">Couldn&apos;t load the latest data.</p>
+              <p className="mt-0.5 break-words text-xs text-red-600/90">
+                {error}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="shrink-0 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100"
+            >
+              Retry
+            </button>
+          </div>
         )}
 
         {tab === "leaderboard" && (

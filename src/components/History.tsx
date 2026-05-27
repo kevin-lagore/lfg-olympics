@@ -2,11 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { EyeOff, Eye } from "lucide-react";
+import { EyeOff, Eye, ScrollText, CalendarClock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeGameDeltas } from "@/lib/elo";
 import type { Activity, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/EmptyState";
+import { isoToLocalInput, localInputToIso } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -122,9 +134,11 @@ export function History({
       {loading ? (
         <p className="py-12 text-center text-muted-foreground">Loading…</p>
       ) : ordered.length === 0 ? (
-        <p className="py-12 text-center text-muted-foreground">
-          No games recorded yet. Log one on the Record tab.
-        </p>
+        <EmptyState
+          icon={<ScrollText className="size-8" />}
+          title="No games yet"
+          hint="Record a result on the Record tab and it'll show up here."
+        />
       ) : (
         <>
           <ul className="flex flex-col gap-2">
@@ -226,23 +240,31 @@ export function History({
                       </p>
                     </div>
 
-                    <Button
-                      variant={game.excluded ? "outline" : "destructive"}
-                      size="sm"
-                      disabled={isPending}
-                      onClick={() => toggleExcluded(game)}
-                      aria-label={game.excluded ? "Include game" : "Exclude game"}
-                    >
-                      {game.excluded ? (
-                        <>
-                          <Eye className="size-3.5" /> Include
-                        </>
-                      ) : (
-                        <>
-                          <EyeOff className="size-3.5" /> Exclude
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex shrink-0 flex-col gap-1.5">
+                      <EditPlayedAtModal
+                        game={game}
+                        onRefresh={onRefresh}
+                      />
+                      <Button
+                        variant={game.excluded ? "outline" : "destructive"}
+                        size="sm"
+                        disabled={isPending}
+                        onClick={() => toggleExcluded(game)}
+                        aria-label={
+                          game.excluded ? "Include game" : "Exclude game"
+                        }
+                      >
+                        {game.excluded ? (
+                          <>
+                            <Eye className="size-3.5" /> Include
+                          </>
+                        ) : (
+                          <>
+                            <EyeOff className="size-3.5" /> Exclude
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </li>
               );
@@ -261,5 +283,92 @@ export function History({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * One-button edit of a game's `played_at` via a datetime picker (CLAUDE.md §5
+ * polish). Saving is a plain UPDATE to games.played_at — the existing
+ * games-realtime subscription (and the explicit onRefresh here) recomputes the
+ * leaderboard and re-orders the deterministic replay. No new subscription, no
+ * cached ratings touched.
+ */
+function EditPlayedAtModal({
+  game,
+  onRefresh,
+}: {
+  game: Game;
+  onRefresh: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(() => isoToLocalInput(game.played_at));
+  const [saving, setSaving] = useState(false);
+
+  // When (re)opening, sync the input to the game's current stored value so an
+  // external realtime update doesn't leave a stale draft in the field.
+  function onOpenChange(next: boolean) {
+    if (next) setValue(isoToLocalInput(game.played_at));
+    setOpen(next);
+  }
+
+  async function save() {
+    const iso = localInputToIso(value);
+    if (!iso) {
+      toast.error("Pick a valid date and time.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("games")
+        .update({ played_at: iso })
+        .eq("id", game.id);
+      if (error) {
+        toast.error(`Could not update time: ${error.message}`);
+        return;
+      }
+      toast.success("Game time updated");
+      setOpen(false);
+      // Realtime will also fire; refresh now for immediate re-ordering/recompute.
+      await onRefresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => onOpenChange(true)}
+        aria-label="Edit game time"
+      >
+        <CalendarClock className="size-3.5" /> Time
+      </Button>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit game time</DialogTitle>
+          <DialogDescription>
+            Changing when a game was played can re-order the timeline and
+            recompute the leaderboard.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={`played-at-${game.id}`}>Played at</Label>
+          <Input
+            id={`played-at-${game.id}`}
+            type="datetime-local"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button onClick={save} disabled={saving}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
