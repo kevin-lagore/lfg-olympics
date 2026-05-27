@@ -4,8 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Trophy } from "lucide-react";
 import { computeRatings } from "@/lib/elo";
 import type { Activity, Game, Player } from "@/lib/types";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { AnimatedRating } from "@/components/AnimatedRating";
 import { EmptyState } from "@/components/EmptyState";
@@ -36,12 +34,10 @@ export function Leaderboard({
   loading: boolean;
   onRefresh: () => Promise<void>;
 }) {
-  const [activeOnly, setActiveOnly] = useState(true);
-
   const rows = useMemo<Row[]>(() => {
     const ratings = computeRatings(games, players);
     return players
-      .filter((p) => (activeOnly ? p.active : true))
+      .filter((p) => p.active)
       .map((p) => {
         const info = ratings.get(p.id);
         return {
@@ -52,7 +48,7 @@ export function Leaderboard({
         };
       })
       .sort((a, b) => b.rating - a.rating);
-  }, [players, games, activeOnly]);
+  }, [players, games]);
 
   const { min, max } = useMemo(() => {
     if (rows.length === 0) return { min: 1500, max: 1500 };
@@ -95,32 +91,13 @@ export function Leaderboard({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-end gap-2">
-        <Label htmlFor="active-only" className="text-sm text-muted-foreground">
-          Active only
-        </Label>
-        <Switch
-          id="active-only"
-          checked={activeOnly}
-          onCheckedChange={setActiveOnly}
-        />
-      </div>
-
       {loading ? (
         <p className="py-12 text-center text-muted-foreground">Loading…</p>
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<Trophy className="size-8" />}
-          title={
-            activeOnly && players.length > 0
-              ? "No active players"
-              : "No players yet"
-          }
-          hint={
-            activeOnly && players.length > 0
-              ? "Turn off “Active only” to see everyone, or add players with the Record button."
-              : "Add some with the Record button (or visit /seed) to get the rankings going."
-          }
+          title="No players yet"
+          hint="Add some with the Record button (or visit /seed) to get the rankings going."
         />
       ) : (
         <>

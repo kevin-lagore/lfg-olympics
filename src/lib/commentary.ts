@@ -205,6 +205,6 @@ export function buildCommentaryPrompt(input: {
     `Recent results across all activities (newest first):`,
     recentText,
     ``,
-    `Write 3–4 sentences of fun, irreverent commentary on the tournament as a whole. Call out specific players by name. Don't be mean-spirited. Output only the commentary text, no preamble.`,
+    `Write 3–4 sentences of fun, irreverent commentary on the tournament as a whole. Call out specific players by name. Don't be mean-spirited. Within reason attempt to mention all players. Output only the commentary text, no preamble.`,
   ].join("\n");
 }
