@@ -10,7 +10,7 @@ import {
   K_FACTOR,
   UNDERDOG_MULTIPLIER,
 } from "./elo";
-import type { Game, Player } from "./types";
+import type { Adjustment, Game, Player } from "./types";
 
 // Ratings are on the "indexed to 100" scale (CLAUDE.md §4): every classic
 // 1500/400/K=64 constant divided by 15. Win probabilities and relative swings
@@ -39,6 +39,25 @@ function game(
     loser_ids,
     played_at: opts.played_at ?? stamp,
     excluded: opts.excluded ?? false,
+    created_at: opts.created_at ?? stamp,
+  };
+}
+
+let adjSeq = 0;
+function adjustment(
+  player_id: string,
+  delta: number,
+  opts: Partial<Adjustment> = {},
+): Adjustment {
+  adjSeq += 1;
+  const stamp = `2026-02-01T00:00:${String(adjSeq).padStart(2, "0")}.000Z`;
+  return {
+    id: opts.id ?? `adj${adjSeq}`,
+    player_id,
+    delta,
+    reason: opts.reason ?? null,
+    excluded: opts.excluded ?? false,
+    applied_at: opts.applied_at ?? stamp,
     created_at: opts.created_at ?? stamp,
   };
 }
@@ -461,5 +480,155 @@ describe("exclude/re-include matches a replay that skips the game (5-game scenar
         original.get(id)!.gamesPlayed,
       );
     }
+  });
+});
+
+// --- Adjustments (event-sourced manual points, CLAUDE.md §3) ---------------
+
+describe("adjustments in computeRatings", () => {
+  it("moves a player's rating by exactly its delta and sets lastChange (no game played)", () => {
+    const players = [player("A"), player("B")];
+    const out = computeRatings([], players, [adjustment("A", 5)]);
+
+    expect(out.get("A")!.rating).toBeCloseTo(STARTING_RATING + 5, 9);
+    expect(out.get("A")!.lastChange).toBe(5);
+    // An adjustment is NOT a game — gamesPlayed stays 0.
+    expect(out.get("A")!.gamesPlayed).toBe(0);
+    // Untouched player unaffected.
+    expect(out.get("B")!.rating).toBe(STARTING_RATING);
+  });
+
+  it("negative and decimal deltas apply exactly", () => {
+    const players = [player("A")];
+    const out = computeRatings([], players, [
+      adjustment("A", -3.5),
+      adjustment("A", 1.25),
+    ]);
+    expect(out.get("A")!.rating).toBeCloseTo(STARTING_RATING - 3.5 + 1.25, 9);
+    // lastChange reflects the most recent (later-timestamped) adjustment.
+    expect(out.get("A")!.lastChange).toBe(1.25);
+  });
+
+  it("an adjustment BEFORE a game changes that game's delta via pre-game ratings", () => {
+    seq = 700;
+    adjSeq = 0;
+    const players = [player("A"), player("B")];
+    // Adjustment lands first (Feb timestamps come after Jan game timestamps,
+    // so force the adjustment earlier than the game explicitly).
+    const adj = adjustment("A", 13, {
+      applied_at: "2026-01-01T00:00:00.000Z",
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+    const g = game(["A"], ["B"]); // played_at ~ 2026-01-01T00:00:01Z (seq>700)
+
+    // Without the adjustment: equal 100/100 -> even-game delta.
+    const noAdj = computeRatings([g], players);
+    expect(noAdj.get("A")!.lastChange).toBeCloseTo(EVEN_DELTA, 6);
+
+    // With the adjustment first: A is now ~113 pre-game, so A is the favourite
+    // and wins a SMALLER delta than the even-game delta.
+    const withAdj = computeRatings([g], players, [adj]);
+    const gameMove = withAdj.get("A")!.lastChange!; // the game is A's last event
+    expect(gameMove).toBeGreaterThan(0);
+    expect(gameMove).toBeLessThan(EVEN_DELTA);
+
+    // Sanity: B's loss mirrors that smaller delta.
+    expect(withAdj.get("B")!.lastChange).toBeCloseTo(-gameMove, 6);
+    // And A's final rating is 100 + 13 (adjustment) + gameMove (the game).
+    expect(withAdj.get("A")!.rating).toBeCloseTo(
+      STARTING_RATING + 13 + gameMove,
+      6,
+    );
+  });
+
+  it("an adjustment AFTER a game does not change that game's delta", () => {
+    seq = 720;
+    adjSeq = 100;
+    const players = [player("A"), player("B")];
+    const g = game(["A"], ["B"]); // Jan timestamp
+    const adj = adjustment("A", 50); // Feb timestamp -> strictly after the game
+
+    const out = computeRatings([g], players, [adj]);
+    // The game saw equal pre-game ratings, so it applied the even-game delta;
+    // the adjustment then lands on top.
+    expect(out.get("A")!.rating).toBeCloseTo(
+      STARTING_RATING + EVEN_DELTA + 50,
+      6,
+    );
+    expect(out.get("B")!.rating).toBeCloseTo(STARTING_RATING - EVEN_DELTA, 6);
+    // lastChange for A is the adjustment (its latest event).
+    expect(out.get("A")!.lastChange).toBe(50);
+  });
+
+  it("an excluded adjustment is skipped; re-including restores it", () => {
+    const players = [player("A")];
+    const included = computeRatings([], players, [adjustment("A", 7)]);
+    expect(included.get("A")!.rating).toBeCloseTo(STARTING_RATING + 7, 9);
+
+    const excluded = computeRatings([], players, [
+      adjustment("A", 7, { excluded: true }),
+    ]);
+    expect(excluded.get("A")!.rating).toBe(STARTING_RATING);
+    expect(excluded.get("A")!.lastChange).toBeNull();
+
+    // Re-including (flag back to false) restores exactly.
+    const reincluded = computeRatings([], players, [
+      adjustment("A", 7, { excluded: false }),
+    ]);
+    expect(reincluded.get("A")!.rating).toBeCloseTo(STARTING_RATING + 7, 9);
+  });
+
+  it("is deterministic with games + adjustments shuffled into any input order", () => {
+    seq = 800;
+    adjSeq = 200;
+    const players = [player("A"), player("B"), player("C")];
+    const games: Game[] = [
+      game(["A"], ["B"]),
+      game(["B"], ["C"]),
+      game(["C"], ["A"]),
+    ];
+    const adjustments: Adjustment[] = [
+      adjustment("A", 4),
+      adjustment("B", -2),
+      adjustment("C", 1.5),
+    ];
+
+    const baseline = computeRatings(games, players, adjustments);
+    const shuffledGames = computeRatings(
+      [games[2], games[0], games[1]],
+      players,
+      [adjustments[1], adjustments[2], adjustments[0]],
+    );
+    const reversed = computeRatings(
+      [...games].reverse(),
+      players,
+      [...adjustments].reverse(),
+    );
+
+    for (const id of ["A", "B", "C"]) {
+      expect(shuffledGames.get(id)!.rating).toBeCloseTo(
+        baseline.get(id)!.rating,
+        9,
+      );
+      expect(reversed.get(id)!.rating).toBeCloseTo(
+        baseline.get(id)!.rating,
+        9,
+      );
+      // gamesPlayed counts games only, not adjustments.
+      expect(shuffledGames.get(id)!.gamesPlayed).toBe(
+        baseline.get(id)!.gamesPlayed,
+      );
+    }
+  });
+
+  it("two-arg calls (no adjustments) behave exactly as before", () => {
+    const players = [player("A"), player("B")];
+    const g = game(["A"], ["B"]);
+    const twoArg = computeRatings([g], players);
+    const threeArgEmpty = computeRatings([g], players, []);
+    expect(twoArg.get("A")!.rating).toBeCloseTo(
+      threeArgEmpty.get("A")!.rating,
+      9,
+    );
   });
 });

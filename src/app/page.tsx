@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { BottomTabBar, type TabKey } from "@/components/BottomTabBar";
 import { RanksAndStats } from "@/components/RanksAndStats";
 import { RecordResult } from "@/components/RecordResult";
 import { History } from "@/components/History";
 import { Commentary } from "@/components/Commentary";
+import { Admin } from "@/components/Admin";
 import {
   Dialog,
   DialogContent,
@@ -13,14 +15,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useOlympicsData } from "@/lib/useOlympicsData";
+import { useAdminRevealed } from "@/lib/useAdminRevealed";
 
 export default function Home() {
   const [tab, setTab] = useState<TabKey>("ranks");
   const [recordOpen, setRecordOpen] = useState(false);
+  const { revealed: adminRevealed, reveal, hide } = useAdminRevealed();
   const {
     players,
     activities,
     games,
+    adjustments,
     commentary,
     loading,
     error,
@@ -28,6 +33,25 @@ export default function Home() {
     regenerating,
     regenerateCommentary,
   } = useOlympicsData();
+
+  // If Admin gets hidden while it's the active tab, fall back to Ranks. Derived
+  // during render (no setState-in-effect) so the view is always consistent.
+  const effectiveTab: TabKey =
+    tab === "admin" && !adminRevealed ? "ranks" : tab;
+
+  // Long-press on the title reveals the hidden Admin tab (and jumps to it).
+  function handleRevealAdmin() {
+    if (adminRevealed) return;
+    reveal();
+    setTab("admin");
+    toast.success("Admin unlocked");
+  }
+
+  function handleHideAdmin() {
+    hide();
+    setTab("ranks");
+    toast("Admin hidden");
+  }
 
   return (
     <>
@@ -50,25 +74,28 @@ export default function Home() {
           </div>
         )}
 
-        {tab === "ranks" && (
+        {effectiveTab === "ranks" && (
           <RanksAndStats
             players={players}
             activities={activities}
             games={games}
+            adjustments={adjustments}
             loading={loading}
             onRefresh={refresh}
+            onRevealAdmin={handleRevealAdmin}
           />
         )}
-        {tab === "history" && (
+        {effectiveTab === "history" && (
           <History
             players={players}
             activities={activities}
             games={games}
+            adjustments={adjustments}
             loading={loading}
             onRefresh={refresh}
           />
         )}
-        {tab === "commentary" && (
+        {effectiveTab === "commentary" && (
           <Commentary
             games={games}
             commentary={commentary}
@@ -77,12 +104,23 @@ export default function Home() {
             regenerating={regenerating}
           />
         )}
+        {effectiveTab === "admin" && adminRevealed && (
+          <Admin
+            players={players}
+            games={games}
+            adjustments={adjustments}
+            loading={loading}
+            onRefresh={refresh}
+            onHideAdmin={handleHideAdmin}
+          />
+        )}
       </main>
 
       <BottomTabBar
-        active={tab}
+        active={effectiveTab}
         onChange={setTab}
         onRecord={() => setRecordOpen(true)}
+        adminRevealed={adminRevealed}
       />
 
       {/* Record Result is no longer a tab — it opens here as a modal (CLAUDE.md
@@ -100,6 +138,7 @@ export default function Home() {
             players={players}
             activities={activities}
             games={games}
+            adjustments={adjustments}
             loading={loading}
             onRefresh={refresh}
             onGameLogged={regenerateCommentary}

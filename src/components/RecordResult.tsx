@@ -6,7 +6,7 @@ import { UserPlus, PlusSquare, ClipboardList } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeRatings, isUpsetForNewGame } from "@/lib/elo";
 import { fireUpsetConfetti } from "@/lib/confetti";
-import type { Activity, Game, Player } from "@/lib/types";
+import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -63,6 +63,7 @@ export function RecordResult({
   players,
   activities,
   games,
+  adjustments,
   loading,
   onRefresh,
   onGameLogged,
@@ -71,6 +72,7 @@ export function RecordResult({
   players: Player[];
   activities: Activity[];
   games: Game[];
+  adjustments: Adjustment[];
   loading: boolean;
   onRefresh: () => Promise<void>;
   /**
@@ -198,7 +200,9 @@ export function RecordResult({
         excluded: false,
         created_at: new Date().toISOString(),
       };
-      const ratings = computeRatings([...games, provisional], players);
+      // Include adjustments so the toast delta reflects the true pre-game
+      // ratings the new game would see in the replay (CLAUDE.md §3).
+      const ratings = computeRatings([...games, provisional], players, adjustments);
       const headWinner = winner_ids[0];
       const change = ratings.get(headWinner)?.lastChange ?? 0;
       const label = isDoubles

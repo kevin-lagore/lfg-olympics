@@ -22,7 +22,7 @@ import {
   recentGamesForPrompt,
   totalNonExcludedGameCount,
 } from "@/lib/commentary";
-import type { Activity, Game, Player } from "@/lib/types";
+import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 
 // Always run dynamically on the server (never prerendered/cached).
 export const dynamic = "force-dynamic";
@@ -62,14 +62,21 @@ export async function POST() {
     );
   }
 
-  // 1. Fetch ALL games, all activities (for names), and all players (standings).
-  const [gamesRes, activitiesRes, playersRes] = await Promise.all([
-    supabase.from("games").select("*"),
-    supabase.from("activities").select("*"),
-    supabase.from("players").select("*"),
-  ]);
+  // 1. Fetch ALL games, adjustments, activities (for names), and players.
+  const [gamesRes, adjustmentsRes, activitiesRes, playersRes] =
+    await Promise.all([
+      supabase.from("games").select("*"),
+      supabase.from("adjustments").select("*"),
+      supabase.from("activities").select("*"),
+      supabase.from("players").select("*"),
+    ]);
 
-  if (gamesRes.error || activitiesRes.error || playersRes.error) {
+  if (
+    gamesRes.error ||
+    adjustmentsRes.error ||
+    activitiesRes.error ||
+    playersRes.error
+  ) {
     return Response.json(
       { error: "Failed to load games, activities, or players." },
       { status: 500 },
@@ -77,14 +84,16 @@ export async function POST() {
   }
 
   const games = (gamesRes.data ?? []) as Game[];
+  const adjustments = (adjustmentsRes.data ?? []) as Adjustment[];
   const activities = (activitiesRes.data ?? []) as Activity[];
   const players = (playersRes.data ?? []) as Player[];
 
   const count = totalNonExcludedGameCount(games);
 
   // 2. Build the unified prompt. Standings use the global elo ratings (computed,
-  //    never stored). Recent games span all activities, newest first.
-  const ratings = computeRatings(games, players);
+  //    never stored) and include manual adjustments as event-sourced inputs.
+  //    Recent games span all activities, newest first.
+  const ratings = computeRatings(games, players, adjustments);
   const standings = overallStandings(games, players, ratings);
   const activityNameById = new Map(activities.map((a) => [a.id, a.name]));
   const recentGames = recentGamesForPrompt(games, players, activityNameById, 10);

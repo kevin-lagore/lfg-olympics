@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { EyeOff, Eye, ScrollText, CalendarClock } from "lucide-react";
+import { EyeOff, Eye, ScrollText, CalendarClock, Settings } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeGameDeltas } from "@/lib/elo";
-import type { Activity, Game, Player } from "@/lib/types";
+import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,16 +47,23 @@ function formatDelta(delta: number | undefined): string {
   return `${rounded > 0 ? "+" : "−"}${Math.abs(rounded)}`;
 }
 
+/** A unified, time-ordered history entry: either a game or an admin adjustment. */
+type HistoryItem =
+  | { kind: "game"; ts: string; created_at: string; game: Game }
+  | { kind: "adjustment"; ts: string; created_at: string; adjustment: Adjustment };
+
 export function History({
   players,
   activities,
   games,
+  adjustments,
   loading,
   onRefresh,
 }: {
   players: Player[];
   activities: Activity[];
   games: Game[];
+  adjustments: Adjustment[];
   loading: boolean;
   onRefresh: () => Promise<void>;
 }) {
@@ -86,14 +93,28 @@ export function History({
     [games, players],
   );
 
-  // Reverse-chronological: newest first. Same key as the replay sort, reversed.
-  const ordered = useMemo(() => {
-    return [...games].sort((a, b) => {
-      const pa = b.played_at.localeCompare(a.played_at);
+  // Unified reverse-chronological feed: games + adjustments interleaved by time
+  // (games by played_at, adjustments by applied_at), tie-broken by created_at —
+  // newest first. Mirrors the replay sort in computeRatings, reversed.
+  const ordered = useMemo<HistoryItem[]>(() => {
+    const items: HistoryItem[] = [];
+    for (const g of games) {
+      items.push({ kind: "game", ts: g.played_at, created_at: g.created_at, game: g });
+    }
+    for (const adj of adjustments) {
+      items.push({
+        kind: "adjustment",
+        ts: adj.applied_at,
+        created_at: adj.created_at,
+        adjustment: adj,
+      });
+    }
+    return items.sort((a, b) => {
+      const pa = b.ts.localeCompare(a.ts);
       if (pa !== 0) return pa;
       return b.created_at.localeCompare(a.created_at);
     });
-  }, [games]);
+  }, [games, adjustments]);
 
   const visible = ordered.slice(0, pages * PAGE_SIZE);
   const hasMore = ordered.length > visible.length;
@@ -122,6 +143,30 @@ export function History({
     }
   }
 
+  async function toggleAdjustmentExcluded(adj: Adjustment) {
+    setPending((p) => ({ ...p, [adj.id]: true }));
+    try {
+      const next = !adj.excluded;
+      const { error } = await supabase
+        .from("adjustments")
+        .update({ excluded: next })
+        .eq("id", adj.id);
+      if (error) {
+        toast.error(`Could not update: ${error.message}`);
+        return;
+      }
+      toast.success(next ? "Adjustment excluded" : "Adjustment included");
+      // Realtime will also fire; refresh now for immediate recompute.
+      await onRefresh();
+    } finally {
+      setPending((p) => {
+        const rest = { ...p };
+        delete rest[adj.id];
+        return rest;
+      });
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <header className="flex items-center justify-between">
@@ -129,7 +174,7 @@ export function History({
           <span aria-hidden="true">📜</span> History
         </h1>
         <span className="text-sm text-muted-foreground tabular-nums">
-          {ordered.length} game{ordered.length === 1 ? "" : "s"}
+          {ordered.length} event{ordered.length === 1 ? "" : "s"}
         </span>
       </header>
 
@@ -144,7 +189,21 @@ export function History({
       ) : (
         <>
           <ul className="flex flex-col gap-2">
-            {visible.map((game) => {
+            {visible.map((item) => {
+              if (item.kind === "adjustment") {
+                const adj = item.adjustment;
+                return (
+                  <AdjustmentRow
+                    key={adj.id}
+                    adjustment={adj}
+                    playerName={nameOf(adj.player_id)}
+                    now={now}
+                    isPending={!!pending[adj.id]}
+                    onToggle={() => toggleAdjustmentExcluded(adj)}
+                  />
+                );
+              }
+              const game = item.game;
               const gameDeltas = deltas.get(game.id);
               const isPending = !!pending[game.id];
               const winners = game.winner_ids;
@@ -285,6 +344,105 @@ export function History({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * A single admin-adjustment row in the unified History feed (CLAUDE.md admin
+ * spec part D). Visually distinct from games (⚙️ icon, accent tint). Carries an
+ * Exclude/Include toggle just like a game; excluded rows render greyed/italic.
+ * Toggling propagates via realtime -> leaderboard recompute.
+ */
+function AdjustmentRow({
+  adjustment,
+  playerName,
+  now,
+  isPending,
+  onToggle,
+}: {
+  adjustment: Adjustment;
+  playerName: string;
+  now: number;
+  isPending: boolean;
+  onToggle: () => void;
+}) {
+  const excluded = adjustment.excluded;
+  const signed = formatDelta(adjustment.delta);
+
+  return (
+    <li
+      className={cn(
+        "lfg-pop-in rounded-2xl border-2 border-transparent bg-indigo-50/60 p-3 shadow-sm ring-1 ring-indigo-200",
+        excluded && "border-dashed border-border bg-card opacity-60 ring-0",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 truncate text-sm font-semibold",
+                excluded && "italic",
+              )}
+            >
+              <Settings className="size-3.5 shrink-0 text-indigo-500" />
+              Admin adjustment
+            </span>
+            <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-indigo-700">
+              Adjustment
+            </span>
+            {excluded && (
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                Excluded
+              </span>
+            )}
+          </div>
+
+          <div className={cn("mt-2 text-sm", excluded && "italic")}>
+            <span className="font-medium">{playerName}</span>{" "}
+            <span
+              className={cn(
+                "font-semibold tabular-nums",
+                excluded
+                  ? "text-muted-foreground"
+                  : adjustment.delta >= 0
+                    ? "text-green-600"
+                    : "text-red-600",
+              )}
+            >
+              {signed}
+            </span>
+            {adjustment.reason ? (
+              <span className="text-muted-foreground"> — {adjustment.reason}</span>
+            ) : null}
+          </div>
+
+          <p className="mt-2 text-xs text-muted-foreground">
+            {relativeTime(adjustment.applied_at, now)}
+          </p>
+        </div>
+
+        <div className="flex shrink-0 flex-col gap-1.5">
+          <Button
+            variant={excluded ? "outline" : "destructive"}
+            size="sm"
+            disabled={isPending}
+            onClick={onToggle}
+            aria-label={excluded ? "Include adjustment" : "Exclude adjustment"}
+          >
+            {excluded ? (
+              <>
+                <Eye className="size-3.5" /> Include
+              </>
+            ) : (
+              <>
+                <EyeOff className="size-3.5" /> Exclude
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+    </li>
   );
 }
 

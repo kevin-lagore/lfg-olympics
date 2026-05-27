@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
-import type { Activity, Game, Player } from "@/lib/types";
+import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Leaderboard } from "@/components/Leaderboard";
 import { ActivityStats } from "@/components/ActivityStats";
 import { ShareButton } from "@/components/ShareButton";
+import { useLongPress } from "@/lib/useLongPress";
 
 type SubTab = "ranks" | "stats";
 
@@ -21,17 +22,28 @@ export function RanksAndStats({
   players,
   activities,
   games,
+  adjustments,
   loading,
   onRefresh,
+  onRevealAdmin,
 }: {
   players: Player[];
   activities: Activity[];
   games: Game[];
+  adjustments: Adjustment[];
   loading: boolean;
   onRefresh: () => Promise<void>;
+  /**
+   * Fired by a long-press (~600ms) on the app title — the secret reveal for the
+   * hidden Admin tab (touch + mouse). A normal tap does NOT fire it.
+   */
+  onRevealAdmin: () => void;
 }) {
   const [sub, setSub] = useState<SubTab>("ranks");
   const [refreshing, setRefreshing] = useState(false);
+
+  // Long-press the title to reveal the hidden Admin tab (CLAUDE.md admin spec).
+  const longPress = useLongPress(onRevealAdmin, 600);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -45,7 +57,13 @@ export function RanksAndStats({
   return (
     <div className="flex flex-col gap-4">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-extrabold tracking-tight">
+        <h1
+          className="select-none text-2xl font-extrabold tracking-tight"
+          // Long-press (~600ms) to reveal the secret Admin tab. touch-none stops
+          // the browser hijacking the pointer for scroll/text-select mid-press.
+          style={{ touchAction: "none" }}
+          {...longPress}
+        >
           <span aria-hidden="true">🏆</span> LFG Olympics
         </h1>
         <div className="flex items-center gap-1">
@@ -99,6 +117,7 @@ export function RanksAndStats({
           players={players}
           activities={activities}
           games={games}
+          adjustments={adjustments}
           loading={loading}
           onRefresh={onRefresh}
         />

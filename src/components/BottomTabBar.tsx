@@ -1,13 +1,14 @@
 "use client";
 
-import { Trophy, History, MessageSquare, Plus } from "lucide-react";
+import { Trophy, History, MessageSquare, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Navigable tabs (V6, CLAUDE.md §5/§6): three nav tabs. "Record" is NOT a tab —
+ * Navigable tabs (V6, CLAUDE.md §5/§6): three nav tabs by default, plus a hidden
+ * "admin" tab revealed via a long-press on the title. "Record" is NOT a tab —
  * it's the raised central action button rendered separately below.
  */
-export type TabKey = "ranks" | "history" | "commentary";
+export type TabKey = "ranks" | "history" | "commentary" | "admin";
 
 const TABS: { key: TabKey; label: string; Icon: typeof Trophy }[] = [
   { key: "ranks", label: "Ranks & Stats", Icon: Trophy },
@@ -15,20 +16,27 @@ const TABS: { key: TabKey; label: string; Icon: typeof Trophy }[] = [
   { key: "commentary", label: "Buzz", Icon: MessageSquare },
 ];
 
+const ADMIN_TAB = { key: "admin" as const, label: "Admin", Icon: Settings };
+
 export function BottomTabBar({
   active,
   onChange,
   onRecord,
+  adminRevealed,
 }: {
   active: TabKey;
   onChange: (key: TabKey) => void;
   /** Opens the Record Result modal (View 2 is no longer a tab). */
   onRecord: () => void;
+  /** When true, the secret Admin tab is shown after the Buzz tab. */
+  adminRevealed: boolean;
 }) {
-  // Two nav tabs left of the Record button, one to the right (3 total) so the
-  // raised + button sits visually centred on the bar.
-  const left = TABS.slice(0, 2);
-  const right = TABS.slice(2);
+  // Two nav tabs left of the Record button, the rest to the right, so the raised
+  // + button stays visually centred. The Admin tab (when revealed) joins the
+  // right group: 2 left + 2 right.
+  const tabs = adminRevealed ? [...TABS, ADMIN_TAB] : TABS;
+  const left = tabs.slice(0, 2);
+  const right = tabs.slice(2);
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-50 border-t-2 border-primary/10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">

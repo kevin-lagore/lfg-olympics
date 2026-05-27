@@ -4,7 +4,7 @@
 // games in deterministic chronological order. Same input always yields the
 // same output.
 
-import type { Game, Player, RatingInfo } from "./types";
+import type { Adjustment, Game, Player, RatingInfo } from "./types";
 
 // Index-to-100 factor (CLAUDE.md §4). Every classic 1500-scale Elo constant is
 // divided by SCALE so the displayed numbers are friendlier (start at 100) while
@@ -99,20 +99,28 @@ export function isUpsetForNewGame(
 }
 
 /**
- * Replay all games (filtering excluded, sorting deterministically) and return
- * the current rating, non-excluded games played, and last per-game delta for
- * every player.
+ * Replay all events (games + manual adjustments) and return the current rating,
+ * non-excluded games played, and last change for every player. Excluded events
+ * are filtered; the rest are merged into one deterministically-sorted timeline.
  *
- * Doubles: team_rating = mean(member pre-game ratings); one delta is computed
- * as if 1v1, then the FULL delta is applied to each member (+winners, -losers),
- * keeping the system zero-sum at the player level.
+ * Games: team_rating = mean(member pre-game ratings); one delta is computed as
+ * if 1v1, then the FULL delta is applied to each member (+winners, -losers),
+ * keeping the system zero-sum at the player level. Underdog multiplier (×1.3)
+ * applies when the winning side's pre-game average rating is strictly lower than
+ * the losing side's pre-game average rating.
  *
- * Underdog multiplier (×1.3) applies when the winning side's pre-game average
- * rating is strictly lower than the losing side's pre-game average rating.
+ * Adjustments (CLAUDE.md §3): an admin-logged signed `delta` added to one
+ * player's rating at its `applied_at` time. Interleaved with games by time so it
+ * affects the pre-game ratings later games see. It sets that player's lastChange
+ * but does NOT increment gamesPlayed (an adjustment is not a game).
+ *
+ * `adjustments` is OPTIONAL (defaults to []) so existing 2-arg call sites and
+ * tests keep working unchanged.
  */
 export function computeRatings(
   games: Game[],
   players: Player[],
+  adjustments: Adjustment[] = [],
 ): Map<string, RatingInfo> {
   const ratings = new Map<string, number>();
   const gamesPlayed = new Map<string, number>();
@@ -125,7 +133,7 @@ export function computeRatings(
     lastChange.set(player.id, null);
   }
 
-  // Defensive: also initialise any player id that appears in games but is not
+  // Defensive: also initialise any player id that appears in events but is not
   // in the players list, so replay never produces NaN.
   const ensure = (id: string) => {
     if (!ratings.has(id)) {
@@ -135,35 +143,67 @@ export function computeRatings(
     }
   };
 
-  const ordered = games
-    .filter((g) => !g.excluded)
-    .sort((a, b) => {
-      // played_at ASC, then created_at ASC (deterministic tie-break).
-      const pa = a.played_at.localeCompare(b.played_at);
-      if (pa !== 0) return pa;
-      return a.created_at.localeCompare(b.created_at);
+  // Merge non-excluded games and non-excluded adjustments into ONE timeline,
+  // sorted by event timestamp (games by played_at, adjustments by applied_at),
+  // tie-broken by created_at — fully deterministic regardless of input order
+  // (CLAUDE.md §2 event sourcing). Adjustments are interleaved by time so they
+  // affect the pre-game ratings later games see (NOT applied at the end).
+  type Event =
+    | { kind: "game"; ts: string; created_at: string; game: Game }
+    | { kind: "adjustment"; ts: string; created_at: string; adjustment: Adjustment };
+
+  const events: Event[] = [];
+  for (const g of games) {
+    if (g.excluded) continue;
+    events.push({ kind: "game", ts: g.played_at, created_at: g.created_at, game: g });
+  }
+  for (const adj of adjustments) {
+    if (adj.excluded) continue;
+    events.push({
+      kind: "adjustment",
+      ts: adj.applied_at,
+      created_at: adj.created_at,
+      adjustment: adj,
     });
+  }
 
-  for (const game of ordered) {
-    const winners = game.winner_ids;
-    const losers = game.loser_ids;
-    [...winners, ...losers].forEach(ensure);
+  events.sort((a, b) => {
+    // event timestamp ASC, then created_at ASC (deterministic tie-break).
+    const pa = a.ts.localeCompare(b.ts);
+    if (pa !== 0) return pa;
+    return a.created_at.localeCompare(b.created_at);
+  });
 
-    const winnerRatings = winners.map((id) => ratings.get(id)!);
-    const loserRatings = losers.map((id) => ratings.get(id)!);
+  for (const ev of events) {
+    if (ev.kind === "game") {
+      const game = ev.game;
+      const winners = game.winner_ids;
+      const losers = game.loser_ids;
+      [...winners, ...losers].forEach(ensure);
 
-    const delta = gameDelta(winnerRatings, loserRatings);
+      const winnerRatings = winners.map((id) => ratings.get(id)!);
+      const loserRatings = losers.map((id) => ratings.get(id)!);
 
-    // Apply FULL delta to each member (zero-sum at player level).
-    for (const id of winners) {
-      ratings.set(id, ratings.get(id)! + delta);
-      gamesPlayed.set(id, gamesPlayed.get(id)! + 1);
-      lastChange.set(id, delta);
-    }
-    for (const id of losers) {
-      ratings.set(id, ratings.get(id)! - delta);
-      gamesPlayed.set(id, gamesPlayed.get(id)! + 1);
-      lastChange.set(id, -delta);
+      const delta = gameDelta(winnerRatings, loserRatings);
+
+      // Apply FULL delta to each member (zero-sum at player level).
+      for (const id of winners) {
+        ratings.set(id, ratings.get(id)! + delta);
+        gamesPlayed.set(id, gamesPlayed.get(id)! + 1);
+        lastChange.set(id, delta);
+      }
+      for (const id of losers) {
+        ratings.set(id, ratings.get(id)! - delta);
+        gamesPlayed.set(id, gamesPlayed.get(id)! + 1);
+        lastChange.set(id, -delta);
+      }
+    } else {
+      // Adjustment: add the signed delta to that player's rating and record it
+      // as their lastChange. Does NOT increment gamesPlayed (it is not a game).
+      const adj = ev.adjustment;
+      ensure(adj.player_id);
+      ratings.set(adj.player_id, ratings.get(adj.player_id)! + adj.delta);
+      lastChange.set(adj.player_id, adj.delta);
     }
   }
 

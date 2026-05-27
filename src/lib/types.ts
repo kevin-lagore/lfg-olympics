@@ -25,6 +25,20 @@ export type Game = {
   created_at: string;
 };
 
+// Manual score adjustment (CLAUDE.md §3). An EVENT type, like a game: replayed
+// in chronological order alongside games so ratings stay computed-only (§2). A
+// signed `delta` on the 100 index scale is added to one player's rating at
+// `applied_at`. Reversible via the `excluded` flag; surfaced in History.
+export type Adjustment = {
+  id: string;
+  player_id: string;
+  delta: number; // signed points on the 100 index scale (e.g. +5, -3)
+  reason: string | null; // optional admin note
+  excluded: boolean;
+  applied_at: string;
+  created_at: string;
+};
+
 // Per-activity commentary (legacy; retained in schema but no longer used by
 // View 5 — superseded by the unified TournamentCommentary below).
 export type Commentary = {

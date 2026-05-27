@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Trophy } from "lucide-react";
 import { computeRatings, STARTING_RATING } from "@/lib/elo";
-import type { Activity, Game, Player } from "@/lib/types";
+import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AnimatedRating } from "@/components/AnimatedRating";
 import { EmptyState } from "@/components/EmptyState";
@@ -26,16 +26,18 @@ type Row = {
 export function Leaderboard({
   players,
   games,
+  adjustments,
   loading,
 }: {
   players: Player[];
   activities: Activity[];
   games: Game[];
+  adjustments: Adjustment[];
   loading: boolean;
   onRefresh: () => Promise<void>;
 }) {
   const rows = useMemo<Row[]>(() => {
-    const ratings = computeRatings(games, players);
+    const ratings = computeRatings(games, players, adjustments);
     return players
       .filter((p) => p.active)
       .map((p) => {
@@ -48,7 +50,7 @@ export function Leaderboard({
         };
       })
       .sort((a, b) => b.rating - a.rating);
-  }, [players, games]);
+  }, [players, games, adjustments]);
 
   const { min, max } = useMemo(() => {
     if (rows.length === 0) return { min: STARTING_RATING, max: STARTING_RATING };

@@ -5,6 +5,7 @@ import { supabase } from "./supabase";
 import { runCommentaryRegeneration } from "./commentary";
 import type {
   Activity,
+  Adjustment,
   Game,
   Player,
   TournamentCommentary,
@@ -14,6 +15,7 @@ export type OlympicsData = {
   players: Player[];
   activities: Activity[];
   games: Game[];
+  adjustments: Adjustment[];
   commentary: TournamentCommentary | null;
   loading: boolean;
   error: string | null;
@@ -45,6 +47,7 @@ export function useOlympicsData(): OlympicsData {
   const [players, setPlayers] = useState<Player[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [games, setGames] = useState<Game[]>([]);
+  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
   const [commentary, setCommentary] = useState<TournamentCommentary | null>(
     null,
   );
@@ -58,19 +61,21 @@ export function useOlympicsData(): OlympicsData {
 
   const refresh = useCallback(async () => {
     setError(null);
-    const [p, a, g, c] = await Promise.all([
+    const [p, a, g, adj, c] = await Promise.all([
       supabase.from("players").select("*").order("created_at"),
       supabase.from("activities").select("*").order("name"),
       supabase.from("games").select("*"),
+      supabase.from("adjustments").select("*"),
       // Single-row unified commentary (id = 1). maybeSingle() tolerates the
       // empty state (no row yet) without surfacing an error.
       supabase.from("tournament_commentary").select("*").eq("id", 1).maybeSingle(),
     ]);
-    if (p.error || a.error || g.error || c.error) {
+    if (p.error || a.error || g.error || adj.error || c.error) {
       setError(
         p.error?.message ??
           a.error?.message ??
           g.error?.message ??
+          adj.error?.message ??
           c.error?.message ??
           "Load failed",
       );
@@ -79,6 +84,7 @@ export function useOlympicsData(): OlympicsData {
     setPlayers((p.data ?? []) as Player[]);
     setActivities((a.data ?? []) as Activity[]);
     setGames((g.data ?? []) as Game[]);
+    setAdjustments((adj.data ?? []) as Adjustment[]);
     setCommentary((c.data as TournamentCommentary | null) ?? null);
   }, []);
 
@@ -112,12 +118,21 @@ export function useOlympicsData(): OlympicsData {
       if (mounted) setLoading(false);
     })();
 
-    // Realtime: re-fetch on any change to games (CLAUDE.md §2 "Real-time").
+    // Realtime: re-fetch on any change to games OR adjustments (CLAUDE.md §2
+    // "Real-time"). Adjustments are an event type alongside games (§3), so an
+    // admin insert/exclude propagates to every client and recomputes ratings.
     const channel = supabase
-      .channel("games-changes")
+      .channel("olympics-changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "games" },
+        () => {
+          void refresh();
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "adjustments" },
         () => {
           void refresh();
         },
@@ -134,6 +149,7 @@ export function useOlympicsData(): OlympicsData {
     players,
     activities,
     games,
+    adjustments,
     commentary,
     loading,
     error,
