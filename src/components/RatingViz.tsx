@@ -2,8 +2,9 @@
 
 import type { Player } from "@/lib/types";
 import { ratingBarHeights } from "@/lib/viz";
-import { avatarColorIndex, initials } from "@/lib/avatar";
+import { avatarColorIndex, chartLabels } from "@/lib/avatar";
 import { cn } from "@/lib/utils";
+import { ScoringInfo } from "@/components/ScoringInfo";
 
 /**
  * A playful column-chart view of the current rating pool (CLAUDE.md §5 View 1):
@@ -31,6 +32,7 @@ export type VizRow = {
 export function RatingViz({ rows }: { rows: VizRow[] }) {
   if (rows.length === 0) return null;
   const heights = ratingBarHeights(rows.map((r) => r.rating));
+  const labels = chartLabels(rows.map((r) => r.player.name));
 
   return (
     <section className="rounded-3xl border-2 border-primary/15 bg-card p-4 shadow-sm">
@@ -39,8 +41,9 @@ export function RatingViz({ rows }: { rows: VizRow[] }) {
           📊
         </span>
         <h2 className="text-sm font-extrabold uppercase tracking-wide text-primary">
-          Rating party
+          Score
         </h2>
+        <ScoringInfo />
       </div>
       <div
         className="flex items-end justify-start gap-2 overflow-x-auto pb-1"
@@ -71,12 +74,12 @@ export function RatingViz({ rows }: { rows: VizRow[] }) {
               </div>
               <span
                 className={cn(
-                  "inline-flex size-6 items-center justify-center rounded-full text-[0.6rem] font-extrabold",
-                  "bg-muted text-foreground/70",
+                  "inline-flex max-w-full items-center justify-center rounded-full px-1.5 py-0.5 text-[0.6rem] font-extrabold leading-none",
+                  "truncate bg-muted text-foreground/70",
                 )}
                 title={row.player.name}
               >
-                {initials(row.player.name)}
+                {labels[i]}
               </span>
             </div>
           );
