@@ -1,19 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Trophy } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { computeRatings } from "@/lib/elo";
 import type { Activity, Game, Player } from "@/lib/types";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AnimatedRating } from "@/components/AnimatedRating";
-import { ShareButton } from "@/components/ShareButton";
 import { EmptyState } from "@/components/EmptyState";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
+import { RatingViz } from "@/components/RatingViz";
 
 /** How long a row stays flashed green/red after its rating changes. */
 const FLASH_MS = 900;
+
+/** Medal emoji for the top three; null otherwise. */
+const MEDALS = ["🥇", "🥈", "🥉"] as const;
 
 type Row = {
   player: Player;
@@ -26,7 +29,6 @@ export function Leaderboard({
   players,
   games,
   loading,
-  onRefresh,
 }: {
   players: Player[];
   activities: Activity[];
@@ -35,7 +37,6 @@ export function Leaderboard({
   onRefresh: () => Promise<void>;
 }) {
   const [activeOnly, setActiveOnly] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const rows = useMemo<Row[]>(() => {
     const ratings = computeRatings(games, players);
@@ -92,37 +93,17 @@ export function Leaderboard({
     return () => clearTimeout(t);
   }, [rows]);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await onRefresh();
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Leaderboard</h1>
-        <div className="flex items-center gap-1">
-          <ShareButton />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleRefresh}
-            aria-label="Refresh"
-          >
-            <RefreshCw className={cn("size-5", refreshing && "animate-spin")} />
-          </Button>
-        </div>
-      </header>
-
-      <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-background/95 py-2 backdrop-blur">
+      <div className="flex items-center justify-end gap-2">
         <Label htmlFor="active-only" className="text-sm text-muted-foreground">
           Active only
         </Label>
-        <Switch id="active-only" checked={activeOnly} onCheckedChange={setActiveOnly} />
+        <Switch
+          id="active-only"
+          checked={activeOnly}
+          onCheckedChange={setActiveOnly}
+        />
       </div>
 
       {loading ? (
@@ -137,70 +118,108 @@ export function Leaderboard({
           }
           hint={
             activeOnly && players.length > 0
-              ? "Turn off “Active only” to see everyone, or add players on the Record tab."
-              : "Add some on the Record tab (or visit /seed) to get the rankings going."
+              ? "Turn off “Active only” to see everyone, or add players with the Record button."
+              : "Add some with the Record button (or visit /seed) to get the rankings going."
           }
         />
       ) : (
-        <ol className="flex flex-col gap-2">
-          {rows.map((row, i) => {
-            const pct =
-              max === min ? 100 : ((row.rating - min) / (max - min)) * 100;
-            const change = row.lastChange;
-            return (
-              <li
-                key={row.player.id}
-                className={cn(
-                  "rounded-xl border bg-card p-3 shadow-sm transition-colors duration-500",
-                  flash[row.player.id] === "up" &&
-                    "border-green-400 bg-green-50",
-                  flash[row.player.id] === "down" && "border-red-400 bg-red-50",
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-6 text-center text-lg font-bold tabular-nums text-muted-foreground">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate font-medium">
-                        {row.player.name}
-                      </span>
-                      <AnimatedRating
-                        value={row.rating}
-                        className="text-2xl font-bold tabular-nums"
-                      />
-                    </div>
-                    <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>
-                        {row.gamesPlayed} game{row.gamesPlayed === 1 ? "" : "s"}
-                      </span>
-                      {change !== null && Math.round(change) !== 0 ? (
+        <>
+          {/* Fun visual: a playful column chart of the rating pool. */}
+          <RatingViz rows={rows.map((r) => ({ player: r.player, rating: r.rating }))} />
+
+          <ol className="flex flex-col gap-2.5">
+            {rows.map((row, i) => {
+              const pct =
+                max === min ? 100 : ((row.rating - min) / (max - min)) * 100;
+              const change = row.lastChange;
+              const medal = i < 3 ? MEDALS[i] : null;
+              const isTop = i === 0;
+              return (
+                <li
+                  key={row.player.id}
+                  className={cn(
+                    "lfg-pop-in lfg-press rounded-3xl border-2 bg-card p-3.5 shadow-sm transition-colors duration-500",
+                    isTop
+                      ? "border-amber-300 bg-amber-50/60"
+                      : "border-transparent ring-1 ring-border",
+                    flash[row.player.id] === "up" &&
+                      "!border-green-400 !bg-green-50",
+                    flash[row.player.id] === "down" &&
+                      "!border-red-400 !bg-red-50",
+                  )}
+                  style={{ animationDelay: `${Math.min(i * 50, 300)}ms` }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex w-8 shrink-0 items-center justify-center text-2xl">
+                      {medal ?? (
+                        <span className="text-lg font-extrabold tabular-nums text-muted-foreground">
+                          {i + 1}
+                        </span>
+                      )}
+                    </span>
+                    <PlayerAvatar
+                      name={row.player.name}
+                      seed={row.player.id}
+                      size={isTop ? "lg" : "md"}
+                      className={isTop ? "lfg-wiggle" : undefined}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
                         <span
                           className={cn(
-                            "font-semibold tabular-nums",
-                            change > 0 ? "text-green-600" : "text-red-600",
+                            "truncate font-bold",
+                            isTop ? "text-lg" : "text-base",
                           )}
                         >
-                          {change > 0 ? "+" : "−"}
-                          {Math.abs(Math.round(change))}
+                          {row.player.name}
                         </span>
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </div>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${Math.max(4, pct)}%` }}
-                      />
+                        <AnimatedRating
+                          value={row.rating}
+                          className={cn(
+                            "font-extrabold tabular-nums",
+                            isTop ? "text-3xl text-primary" : "text-2xl",
+                          )}
+                        />
+                      </div>
+                      <div className="mt-0.5 flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="font-medium">
+                          {row.gamesPlayed} game
+                          {row.gamesPlayed === 1 ? "" : "s"}
+                        </span>
+                        {change !== null && Math.round(change) !== 0 ? (
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
+                              change > 0
+                                ? "bg-green-100 text-green-700"
+                                : "bg-red-100 text-red-700",
+                            )}
+                          >
+                            {change > 0 ? "▲ +" : "▼ −"}
+                            {Math.abs(Math.round(change))}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/50">—</span>
+                        )}
+                      </div>
+                      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-all duration-500",
+                            isTop
+                              ? "bg-gradient-to-r from-amber-400 to-amber-500"
+                              : "bg-gradient-to-r from-primary/70 to-primary",
+                          )}
+                          style={{ width: `${Math.max(6, pct)}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+                </li>
+              );
+            })}
+          </ol>
+        </>
       )}
     </div>
   );

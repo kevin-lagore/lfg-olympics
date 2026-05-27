@@ -2,15 +2,21 @@
 
 import { useState } from "react";
 import { BottomTabBar, type TabKey } from "@/components/BottomTabBar";
-import { Leaderboard } from "@/components/Leaderboard";
+import { RanksAndStats } from "@/components/RanksAndStats";
 import { RecordResult } from "@/components/RecordResult";
 import { History } from "@/components/History";
-import { ActivityStats } from "@/components/ActivityStats";
 import { Commentary } from "@/components/Commentary";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useOlympicsData } from "@/lib/useOlympicsData";
 
 export default function Home() {
-  const [tab, setTab] = useState<TabKey>("leaderboard");
+  const [tab, setTab] = useState<TabKey>("ranks");
+  const [recordOpen, setRecordOpen] = useState(false);
   const {
     players,
     activities,
@@ -44,23 +50,13 @@ export default function Home() {
           </div>
         )}
 
-        {tab === "leaderboard" && (
-          <Leaderboard
+        {tab === "ranks" && (
+          <RanksAndStats
             players={players}
             activities={activities}
             games={games}
             loading={loading}
             onRefresh={refresh}
-          />
-        )}
-        {tab === "record" && (
-          <RecordResult
-            players={players}
-            activities={activities}
-            games={games}
-            loading={loading}
-            onRefresh={refresh}
-            onGameLogged={regenerateCommentary}
           />
         )}
         {tab === "history" && (
@@ -70,14 +66,6 @@ export default function Home() {
             games={games}
             loading={loading}
             onRefresh={refresh}
-          />
-        )}
-        {tab === "stats" && (
-          <ActivityStats
-            players={players}
-            activities={activities}
-            games={games}
-            loading={loading}
           />
         )}
         {tab === "commentary" && (
@@ -91,7 +79,34 @@ export default function Home() {
         )}
       </main>
 
-      <BottomTabBar active={tab} onChange={setTab} />
+      <BottomTabBar
+        active={tab}
+        onChange={setTab}
+        onRecord={() => setRecordOpen(true)}
+      />
+
+      {/* Record Result is no longer a tab — it opens here as a modal (CLAUDE.md
+          §5 View 2). The success toast, realtime refresh, and fire-and-forget
+          commentary regeneration all fire exactly as before; onRecorded just
+          closes the modal. */}
+      <Dialog open={recordOpen} onOpenChange={setRecordOpen}>
+        <DialogContent className="max-h-[88vh] gap-4 overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-extrabold">
+              <span aria-hidden="true">📝</span> Record a result
+            </DialogTitle>
+          </DialogHeader>
+          <RecordResult
+            players={players}
+            activities={activities}
+            games={games}
+            loading={loading}
+            onRefresh={refresh}
+            onGameLogged={regenerateCommentary}
+            onRecorded={() => setRecordOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
 
 export function ActivityStats({
   players,
@@ -79,7 +80,6 @@ export function ActivityStats({
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-3">
-        <h1 className="text-2xl font-bold">Activity Stats</h1>
         <Select
           value={selected || undefined}
           onValueChange={setPicked}
@@ -107,7 +107,7 @@ export function ActivityStats({
         <EmptyState
           icon={<BarChart3 className="size-8" />}
           title="No activities yet"
-          hint="Add one on the Record tab to start tracking per-activity stats."
+          hint="Add one with the Record button to start tracking per-activity stats."
         />
       ) : !selected ? (
         <EmptyState
@@ -142,10 +142,17 @@ export function ActivityStats({
                 return (
                   <li
                     key={r.playerId}
-                    className="flex items-center justify-between gap-3 rounded-xl border bg-card p-3 shadow-sm"
+                    className="lfg-pop-in flex items-center justify-between gap-3 rounded-2xl border-2 border-transparent bg-card p-3 shadow-sm ring-1 ring-border"
                   >
-                    <span className="min-w-0 flex-1 truncate font-medium">
-                      {selectedName!(r.playerId)}
+                    <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <PlayerAvatar
+                        name={selectedName!(r.playerId)}
+                        seed={r.playerId}
+                        size="sm"
+                      />
+                      <span className="min-w-0 truncate font-semibold">
+                        {selectedName!(r.playerId)}
+                      </span>
                     </span>
                     <span className="tabular-nums text-sm">
                       <span className="font-semibold text-green-600">
@@ -206,9 +213,11 @@ export function ActivityStats({
 
 function SummaryTile({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-3 shadow-sm">
-      <span className="text-2xl font-bold tabular-nums">{value}</span>
-      <span className="text-xs uppercase tracking-wide text-muted-foreground">
+    <div className="lfg-pop-in flex flex-col items-center justify-center rounded-2xl border-2 border-primary/10 bg-card p-3 shadow-sm">
+      <span className="text-2xl font-extrabold tabular-nums text-primary">
+        {value}
+      </span>
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
     </div>

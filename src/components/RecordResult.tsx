@@ -66,6 +66,7 @@ export function RecordResult({
   loading,
   onRefresh,
   onGameLogged,
+  onRecorded,
 }: {
   players: Player[];
   activities: Activity[];
@@ -81,6 +82,12 @@ export function RecordResult({
    * are never delayed (CLAUDE.md §5 View 5).
    */
   onGameLogged: () => void;
+  /**
+   * Optional: called after a successful record once the form has cleared. Used
+   * by the Record modal/sheet (V6) to close itself. The toast / realtime /
+   * commentary-regen all still fire regardless of this callback.
+   */
+  onRecorded?: () => void;
 }) {
   const activePlayers = useMemo(
     () => players.filter((p) => p.active),
@@ -203,6 +210,10 @@ export function RecordResult({
       toast.success(`Recorded — ${label} ${sign}${Math.abs(Math.round(change))}`);
 
       clearForm();
+      // Close the modal/sheet (V6). Done before the refetch await so the sheet
+      // dismisses snappily; the toast + realtime + commentary-regen are already
+      // in flight and converge independently.
+      onRecorded?.();
       await onRefresh();
     } finally {
       setSubmitting(false);
@@ -219,12 +230,9 @@ export function RecordResult({
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Record Result</h1>
-        <div className="flex gap-2">
-          <AddPlayerModal onAdded={onRefresh} />
-          <AddActivityModal onAdded={onRefresh} />
-        </div>
+      <header className="flex items-center justify-end gap-2">
+        <AddPlayerModal onAdded={onRefresh} />
+        <AddActivityModal onAdded={onRefresh} />
       </header>
 
       {loading ? (

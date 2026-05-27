@@ -101,7 +101,9 @@ export function Commentary({
   return (
     <div className="flex flex-col gap-4">
       <header>
-        <h1 className="text-2xl font-bold">Commentary</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">
+          <span aria-hidden="true">📣</span> Commentary
+        </h1>
         <p className="text-sm text-muted-foreground">
           A running, AI-generated take on the whole tournament. Updates itself
           whenever a new game is logged.
@@ -111,7 +113,7 @@ export function Commentary({
       {loading ? (
         <p className="py-12 text-center text-muted-foreground">Loading…</p>
       ) : (
-        <Card>
+        <Card className="lfg-pop-in rounded-3xl border-2 border-primary/15 bg-gradient-to-br from-card to-accent/20 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Megaphone className="size-4" />

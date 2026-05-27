@@ -49,30 +49,33 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Playful party palette (V6). Warm cream background, deep-violet primary,
+     bright accent ramp for avatars / viz bars. Kept readable on white. */
+  --background: oklch(0.985 0.012 95);
+  --foreground: oklch(0.21 0.03 285);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.21 0.03 285);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
+  --popover-foreground: oklch(0.21 0.03 285);
+  --primary: oklch(0.55 0.22 295);
+  --primary-foreground: oklch(0.99 0.01 295);
+  --secondary: oklch(0.94 0.05 95);
+  --secondary-foreground: oklch(0.3 0.05 285);
+  --muted: oklch(0.95 0.02 285);
+  --muted-foreground: oklch(0.52 0.03 285);
+  --accent: oklch(0.92 0.08 200);
+  --accent-foreground: oklch(0.3 0.06 250);
+  --destructive: oklch(0.6 0.23 25);
+  --border: oklch(0.9 0.02 285);
+  --input: oklch(0.9 0.02 285);
+  --ring: oklch(0.55 0.22 295);
+  /* Vibrant ramp reused by avatars + the rating viz. */
+  --chart-1: oklch(0.7 0.2 25);
+  --chart-2: oklch(0.78 0.18 60);
+  --chart-3: oklch(0.8 0.17 130);
+  --chart-4: oklch(0.7 0.18 200);
+  --chart-5: oklch(0.62 0.22 295);
+  --radius: 0.9rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -126,5 +129,87 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* ─── Playful animation utilities (V6) ───────────────────────────────────────
+   Springy entrance + interaction motion. All wrapped so prefers-reduced-motion
+   snaps to the final state instead of animating (CLAUDE.md §6). */
+
+@keyframes lfg-pop-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes lfg-grow-bar {
+  0% {
+    transform: scaleY(0);
+  }
+  70% {
+    transform: scaleY(1.06);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes lfg-wiggle {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-8deg);
+  }
+  75% {
+    transform: rotate(8deg);
+  }
+}
+
+.lfg-pop-in {
+  animation: lfg-pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.lfg-grow-bar {
+  transform-origin: bottom;
+  animation: lfg-grow-bar 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.lfg-wiggle:hover {
+  animation: lfg-wiggle 0.5s ease-in-out;
+}
+
+/* Springy press feedback for chunky tappable cards/buttons. */
+.lfg-press {
+  transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lfg-press:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lfg-pop-in,
+  .lfg-grow-bar,
+  .lfg-wiggle:hover {
+    animation: none;
+  }
+  .lfg-grow-bar {
+    transform: scaleY(1);
+  }
+  .lfg-press {
+    transition: none;
+  }
+  .lfg-press:active {
+    transform: none;
   }
 }

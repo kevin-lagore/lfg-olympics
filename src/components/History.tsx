@@ -125,7 +125,9 @@ export function History({
   return (
     <div className="flex flex-col gap-4">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">History</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">
+          <span aria-hidden="true">📜</span> History
+        </h1>
         <span className="text-sm text-muted-foreground tabular-nums">
           {ordered.length} game{ordered.length === 1 ? "" : "s"}
         </span>
@@ -137,7 +139,7 @@ export function History({
         <EmptyState
           icon={<ScrollText className="size-8" />}
           title="No games yet"
-          hint="Record a result on the Record tab and it'll show up here."
+          hint="Tap the Record button and your games will show up here."
         />
       ) : (
         <>
@@ -152,8 +154,8 @@ export function History({
                 <li
                   key={game.id}
                   className={cn(
-                    "rounded-xl border bg-card p-3 shadow-sm",
-                    game.excluded && "border-dashed opacity-60",
+                    "lfg-pop-in rounded-2xl border-2 border-transparent bg-card p-3 shadow-sm ring-1 ring-border",
+                    game.excluded && "border-dashed border-border opacity-60 ring-0",
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
