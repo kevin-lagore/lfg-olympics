@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,13 @@ import { cn } from "@/lib/utils";
 import { Leaderboard } from "@/components/Leaderboard";
 import { ActivityStats } from "@/components/ActivityStats";
 import { ShareButton } from "@/components/ShareButton";
-import { useLongPress } from "@/lib/useLongPress";
 
 type SubTab = "ranks" | "stats";
+
+/** Taps on the title needed to reveal the hidden Admin tab, and the max gap
+ * (ms) allowed between taps before the count resets. */
+const ADMIN_TAP_COUNT = 5;
+const ADMIN_TAP_WINDOW_MS = 1500;
 
 /**
  * Merged "Ranks & Stats" tab (CLAUDE.md §5): the leaderboard (View 1) and the
@@ -34,16 +38,28 @@ export function RanksAndStats({
   loading: boolean;
   onRefresh: () => Promise<void>;
   /**
-   * Fired by a long-press (~600ms) on the app title — the secret reveal for the
-   * hidden Admin tab (touch + mouse). A normal tap does NOT fire it.
+   * Fired when the app title is tapped 5 times in quick succession — the secret
+   * reveal for the hidden Admin tab. Reliable on touch (plain clicks/taps),
+   * unlike a long-press which mobile browsers hijack for select/context menus.
    */
   onRevealAdmin: () => void;
 }) {
   const [sub, setSub] = useState<SubTab>("ranks");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Long-press the title to reveal the hidden Admin tab (CLAUDE.md admin spec).
-  const longPress = useLongPress(onRevealAdmin, 600);
+  // Tap the title 5x in a row (within ADMIN_TAP_WINDOW_MS between taps) to
+  // reveal the hidden Admin tab.
+  const tapState = useRef<{ count: number; last: number }>({ count: 0, last: 0 });
+  const handleTitleTap = () => {
+    const now = Date.now();
+    const s = tapState.current;
+    s.count = now - s.last > ADMIN_TAP_WINDOW_MS ? 1 : s.count + 1;
+    s.last = now;
+    if (s.count >= ADMIN_TAP_COUNT) {
+      s.count = 0;
+      onRevealAdmin();
+    }
+  };
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -58,11 +74,9 @@ export function RanksAndStats({
     <div className="flex flex-col gap-4">
       <header className="flex items-center justify-between">
         <h1
-          className="select-none text-2xl font-extrabold tracking-tight"
-          // Long-press (~600ms) to reveal the secret Admin tab. touch-none stops
-          // the browser hijacking the pointer for scroll/text-select mid-press.
-          style={{ touchAction: "none" }}
-          {...longPress}
+          className="cursor-default select-none text-2xl font-extrabold tracking-tight"
+          // Tap 5× in a row to reveal the secret Admin tab.
+          onClick={handleTitleTap}
         >
           <span aria-hidden="true">🏆</span> LFG Olympics
         </h1>
