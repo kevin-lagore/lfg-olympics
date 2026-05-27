@@ -43,7 +43,7 @@ export function ScoringInfo() {
             <li className="flex gap-2">
               <span aria-hidden="true">🎬</span>
               <span>
-                Everyone starts on the same score (1500). Clean slate, may the
+                Everyone starts on the same score (100). Clean slate, may the
                 best lawn-warrior win.
               </span>
             </li>

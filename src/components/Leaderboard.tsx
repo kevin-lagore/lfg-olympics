@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Trophy } from "lucide-react";
-import { computeRatings } from "@/lib/elo";
+import { computeRatings, STARTING_RATING } from "@/lib/elo";
 import type { Activity, Game, Player } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AnimatedRating } from "@/components/AnimatedRating";
@@ -42,7 +42,7 @@ export function Leaderboard({
         const info = ratings.get(p.id);
         return {
           player: p,
-          rating: info?.rating ?? 1500,
+          rating: info?.rating ?? STARTING_RATING,
           gamesPlayed: info?.gamesPlayed ?? 0,
           lastChange: info?.lastChange ?? null,
         };
@@ -51,7 +51,7 @@ export function Leaderboard({
   }, [players, games]);
 
   const { min, max } = useMemo(() => {
-    if (rows.length === 0) return { min: 1500, max: 1500 };
+    if (rows.length === 0) return { min: STARTING_RATING, max: STARTING_RATING };
     const values = rows.map((r) => r.rating);
     return { min: Math.min(...values), max: Math.max(...values) };
   }, [rows]);

@@ -6,16 +6,26 @@
 
 import type { Game, Player, RatingInfo } from "./types";
 
-export const STARTING_RATING = 1500;
-export const K_FACTOR = 64;
-export const UNDERDOG_MULTIPLIER = 1.3;
+// Index-to-100 factor (CLAUDE.md §4). Every classic 1500-scale Elo constant is
+// divided by SCALE so the displayed numbers are friendlier (start at 100) while
+// win probabilities, relative swings, and underdog behaviour stay IDENTICAL to
+// a classic 1500/400/K=64 system. Do NOT round these — rounding breaks the
+// "same feel" guarantee.
+const SCALE = 15;
+
+export const STARTING_RATING = 1500 / SCALE; // 100
+export const K_FACTOR = 64 / SCALE; // ≈4.2667 (equivalent to K=64 on classic scale)
+export const UNDERDOG_MULTIPLIER = 1.3; // dimensionless — unchanged
 
 /**
  * Expected score for "self" given self and opponent ratings.
- * expected_self = 1 / (1 + 10^((rating_opponent - rating_self) / 400))
+ * expected_self = 1 / (1 + 10^((rating_opponent - rating_self) / (400 / SCALE)))
+ *
+ * Both the rating difference and the divisor live on the same 1/15 scale, so the
+ * result is identical to the classic 1500-scale value for the equivalent matchup.
  */
 export function expectedScore(ratingSelf: number, ratingOpponent: number): number {
-  return 1 / (1 + Math.pow(10, (ratingOpponent - ratingSelf) / 400));
+  return 1 / (1 + Math.pow(10, (ratingOpponent - ratingSelf) / (400 / SCALE)));
 }
 
 function mean(values: number[]): number {

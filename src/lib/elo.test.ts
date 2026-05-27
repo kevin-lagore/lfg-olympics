@@ -12,6 +12,11 @@ import {
 } from "./elo";
 import type { Game, Player } from "./types";
 
+// Ratings are on the "indexed to 100" scale (CLAUDE.md §4): every classic
+// 1500/400/K=64 constant divided by 15. Win probabilities and relative swings
+// are identical to the classic scale; only the displayed numbers are smaller.
+// STARTING_RATING === 100, K_FACTOR === 64/15 ≈ 4.2667.
+
 // --- Test helpers ---------------------------------------------------------
 
 function player(id: string, name = id, active = true): Player {
@@ -43,16 +48,48 @@ const rating = (m: ReturnType<typeof computeRatings>, id: string) =>
 const round = (m: ReturnType<typeof computeRatings>, id: string) =>
   Math.round(rating(m, id));
 
+// The even-game delta on the 100 scale: K/2 = (64/15)/2 ≈ 2.1333, displays ±2.
+const EVEN_DELTA = K_FACTOR * 0.5;
+
+// --- Scale invariants -----------------------------------------------------
+
+describe("100 index scale", () => {
+  it("starts everyone at 100", () => {
+    expect(STARTING_RATING).toBe(100);
+  });
+
+  it("K_FACTOR is exactly 64/15 (not rounded)", () => {
+    expect(K_FACTOR).toBe(64 / 15);
+  });
+
+  it("even-game delta is exactly 1/15 of the classic-scale delta", () => {
+    // Classic: equal ratings -> K=64, expected 0.5 -> delta 32.
+    const classicEqualDelta = 64 * 0.5; // = 32
+    expect(gameDelta([100], [100])).toBeCloseTo(classicEqualDelta / 15, 9);
+    expect(EVEN_DELTA).toBeCloseTo(32 / 15, 9);
+  });
+
+  it("expected scores are unchanged for equivalent matchups (87 vs 113 ~ 1305 vs 1695)", () => {
+    // 13-point gap on the 100 scale == 195-point gap on the classic scale.
+    expect(expectedScore(87, 113)).toBeCloseTo(
+      // classic 1500-scale equivalent
+      1 / (1 + Math.pow(10, (1695 - 1305) / 400)),
+      9,
+    );
+  });
+});
+
 // --- Singles, equal -------------------------------------------------------
 
 describe("singles, equal ratings", () => {
-  it("winner +32, loser -32 (no underdog)", () => {
+  it("winner +2, loser -2 (no underdog)", () => {
     const players = [player("A"), player("B")];
     const out = computeRatings([game(["A"], ["B"])], players);
-    expect(round(out, "A")).toBe(1532);
-    expect(round(out, "B")).toBe(1468);
-    expect(out.get("A")!.lastChange).toBeCloseTo(32, 6);
-    expect(out.get("B")!.lastChange).toBeCloseTo(-32, 6);
+    // ±2.1333 -> displays ±2 (§4 worked example: equal ±2).
+    expect(round(out, "A")).toBe(102);
+    expect(round(out, "B")).toBe(98);
+    expect(out.get("A")!.lastChange).toBeCloseTo(EVEN_DELTA, 6);
+    expect(out.get("B")!.lastChange).toBeCloseTo(-EVEN_DELTA, 6);
     expect(out.get("A")!.gamesPlayed).toBe(1);
     expect(out.get("B")!.gamesPlayed).toBe(1);
   });
@@ -62,16 +99,16 @@ describe("singles, equal ratings", () => {
 
 describe("singles upset", () => {
   it("applies the 1.3 underdog multiplier when the winner is lower-rated", () => {
-    // First game: B beats A. Now A < B (A=1468, B=1532).
+    // First game: B beats A. Now A < B (A ≈ 97.87, B ≈ 102.13).
     // Second game: A (the underdog) beats B -> underdog multiplier must fire.
     const players = [player("A"), player("B")];
     const g1 = game(["B"], ["A"]);
     const g2 = game(["A"], ["B"]);
     const out = computeRatings([g1, g2], players);
 
-    // Pre-game-2 ratings: A=1468, B=1532.
-    const preA = STARTING_RATING - 32;
-    const preB = STARTING_RATING + 32;
+    // Pre-game-2 ratings: A = 100 - EVEN_DELTA, B = 100 + EVEN_DELTA.
+    const preA = STARTING_RATING - EVEN_DELTA;
+    const preB = STARTING_RATING + EVEN_DELTA;
     const expectedDelta =
       K_FACTOR * (1 - expectedScore(preA, preB)) * UNDERDOG_MULTIPLIER;
 
@@ -82,24 +119,24 @@ describe("singles upset", () => {
     expect(out.get("A")!.lastChange!).toBeGreaterThan(unmultiplied + 0.01);
   });
 
-  it("matches the CLAUDE.md §4 worked example (A 1300 vs B 1700 -> ~+76)", () => {
+  it("matches the CLAUDE.md §4 worked example (A 87 vs B 113 -> ~+5)", () => {
     // Verify the formula path directly against documented numbers.
     const delta =
-      K_FACTOR * (1 - expectedScore(1300, 1700)) * UNDERDOG_MULTIPLIER;
-    expect(Math.round(delta)).toBe(76);
+      K_FACTOR * (1 - expectedScore(87, 113)) * UNDERDOG_MULTIPLIER;
+    expect(Math.round(delta)).toBe(5);
   });
 });
 
 // --- Doubles, equal -------------------------------------------------------
 
 describe("doubles, equal teams", () => {
-  it("each winner +32, each loser -32; zero-sum", () => {
+  it("each winner +2, each loser -2; zero-sum", () => {
     const players = [player("A1"), player("A2"), player("B1"), player("B2")];
     const out = computeRatings([game(["A1", "A2"], ["B1", "B2"])], players);
-    expect(round(out, "A1")).toBe(1532);
-    expect(round(out, "A2")).toBe(1532);
-    expect(round(out, "B1")).toBe(1468);
-    expect(round(out, "B2")).toBe(1468);
+    expect(round(out, "A1")).toBe(102);
+    expect(round(out, "A2")).toBe(102);
+    expect(round(out, "B1")).toBe(98);
+    expect(round(out, "B2")).toBe(98);
     const total =
       rating(out, "A1") +
       rating(out, "A2") +
@@ -113,23 +150,23 @@ describe("doubles, equal teams", () => {
 
 describe("doubles upset", () => {
   it("applies 1.3 multiplier when winning team's avg is lower; matches §4 example", () => {
-    // §4 worked example: Team A avg 1400 vs Team B avg 1600, A wins.
-    const teamA = 1400;
-    const teamB = 1600;
+    // §4 worked example: Team A avg 93 vs Team B avg 107, A wins -> each ±4.
+    const teamA = 93;
+    const teamB = 107;
     const delta = K_FACTOR * (1 - expectedScore(teamA, teamB)) * UNDERDOG_MULTIPLIER;
-    expect(Math.round(delta)).toBe(63);
+    expect(Math.round(delta)).toBe(4);
 
     // Now drive a real replay so winners avg < losers avg, and confirm the
     // full (multiplied) delta is applied to each member with correct sign.
     const players = [player("A1"), player("A2"), player("B1"), player("B2")];
-    // Game 1: B team beats A team -> A members 1468, B members 1532.
+    // Game 1: B team beats A team -> A members 100-EVEN_DELTA, B members 100+EVEN_DELTA.
     const g1 = game(["B1", "B2"], ["A1", "A2"]);
     // Game 2: A team (underdogs) beat B team.
     const g2 = game(["A1", "A2"], ["B1", "B2"]);
     const out = computeRatings([g1, g2], players);
 
-    const preWin = STARTING_RATING - 32; // A members pre-game-2
-    const preLose = STARTING_RATING + 32; // B members pre-game-2
+    const preWin = STARTING_RATING - EVEN_DELTA; // A members pre-game-2
+    const preLose = STARTING_RATING + EVEN_DELTA; // B members pre-game-2
     const expectedDelta =
       K_FACTOR * (1 - expectedScore(preWin, preLose)) * UNDERDOG_MULTIPLIER;
 
@@ -201,7 +238,7 @@ describe("exclude behaviour", () => {
     expect(withExcluded.get("A")!.gamesPlayed).toBe(1);
     expect(withExcluded.get("B")!.gamesPlayed).toBe(1);
     // lastChange reflects only the non-excluded game.
-    expect(withExcluded.get("A")!.lastChange).toBeCloseTo(32, 6);
+    expect(withExcluded.get("A")!.lastChange).toBeCloseTo(EVEN_DELTA, 6);
   });
 
   it("a fully-excluded set leaves everyone at the starting rating", () => {
@@ -220,27 +257,28 @@ describe("exclude behaviour", () => {
 // --- gameDelta helper -----------------------------------------------------
 
 describe("gameDelta helper", () => {
-  it("equal singles -> 32", () => {
-    expect(gameDelta([1500], [1500])).toBeCloseTo(32, 6);
+  it("equal singles -> ~2.13 (displays 2)", () => {
+    expect(gameDelta([100], [100])).toBeCloseTo(EVEN_DELTA, 6);
+    expect(Math.round(gameDelta([100], [100]))).toBe(2);
   });
 
   it("applies underdog x1.3 when winners' avg is strictly lower", () => {
-    expect(gameDelta([1300], [1700])).toBeCloseTo(
-      K_FACTOR * (1 - expectedScore(1300, 1700)) * UNDERDOG_MULTIPLIER,
+    expect(gameDelta([87], [113])).toBeCloseTo(
+      K_FACTOR * (1 - expectedScore(87, 113)) * UNDERDOG_MULTIPLIER,
       6,
     );
-    expect(Math.round(gameDelta([1300], [1700]))).toBe(76); // §4 worked example
+    expect(Math.round(gameDelta([87], [113]))).toBe(5); // §4 worked example
   });
 
   it("no underdog multiplier when winners' avg >= losers' avg", () => {
-    expect(gameDelta([1700], [1300])).toBeCloseTo(
-      K_FACTOR * (1 - expectedScore(1700, 1300)),
+    expect(gameDelta([113], [87])).toBeCloseTo(
+      K_FACTOR * (1 - expectedScore(113, 87)),
       6,
     );
   });
 
-  it("uses team means for doubles (matches §4 upset example -> 63)", () => {
-    expect(Math.round(gameDelta([1400, 1400], [1600, 1600]))).toBe(63);
+  it("uses team means for doubles (matches §4 upset example -> 4)", () => {
+    expect(Math.round(gameDelta([93, 93], [107, 107]))).toBe(4);
   });
 });
 
@@ -248,29 +286,29 @@ describe("gameDelta helper", () => {
 
 describe("isUpset", () => {
   it("true when winners' pre-game average is strictly lower (singles)", () => {
-    expect(isUpset([1300], [1700])).toBe(true);
+    expect(isUpset([87], [113])).toBe(true);
   });
 
   it("false when winners' average is higher", () => {
-    expect(isUpset([1700], [1300])).toBe(false);
+    expect(isUpset([113], [87])).toBe(false);
   });
 
   it("false on an exact tie (strictly lower, not <=)", () => {
-    expect(isUpset([1500], [1500])).toBe(false);
+    expect(isUpset([100], [100])).toBe(false);
   });
 
   it("uses team means for doubles", () => {
-    // winners avg 1400 < losers avg 1600 -> upset.
-    expect(isUpset([1300, 1500], [1550, 1650])).toBe(true);
-    // winners avg 1600 > losers avg 1400 -> not an upset.
-    expect(isUpset([1550, 1650], [1300, 1500])).toBe(false);
+    // winners avg 93 < losers avg 107 -> upset.
+    expect(isUpset([86, 100], [103, 111])).toBe(true);
+    // winners avg 107 > losers avg 93 -> not an upset.
+    expect(isUpset([103, 111], [86, 100])).toBe(false);
   });
 
   it("agrees with gameDelta's multiplier: upset iff delta is multiplied", () => {
-    const w = [1300];
-    const l = [1700];
+    const w = [87];
+    const l = [113];
     const multiplied = gameDelta(w, l);
-    const base = K_FACTOR * (1 - expectedScore(1300, 1700));
+    const base = K_FACTOR * (1 - expectedScore(87, 113));
     // When isUpset is true, gameDelta applied the ×1.3 multiplier.
     expect(isUpset(w, l)).toBe(true);
     expect(multiplied).toBeCloseTo(base * UNDERDOG_MULTIPLIER, 6);
@@ -281,7 +319,7 @@ describe("isUpsetForNewGame", () => {
   it("detects an upset using current computed ratings as the pre-game state", () => {
     seq = 500;
     const players = [player("A"), player("B")];
-    // B beats A first -> A=1468, B=1532. A is now the underdog.
+    // B beats A first -> A < B. A is now the underdog.
     const g1 = game(["B"], ["A"]);
     // New (not-yet-logged) game: A beats B -> upset.
     expect(isUpsetForNewGame([g1], players, ["A"], ["B"])).toBe(true);
@@ -309,18 +347,18 @@ describe("computeGameDeltas", () => {
   it("reports a signed delta per participant per game, consistent with the replay", () => {
     seq = 200;
     const players = [player("A"), player("B")];
-    const g1 = game(["A"], ["B"]); // A +32, B -32
+    const g1 = game(["A"], ["B"]); // A +2.13, B -2.13
     const g2 = game(["A"], ["B"]); // A now favourite, smaller delta
     const deltas = computeGameDeltas([g1, g2], players);
 
     // Game 1: equal ratings.
-    expect(deltas.get(g1.id)!.get("A")).toBeCloseTo(32, 6);
-    expect(deltas.get(g1.id)!.get("B")).toBeCloseTo(-32, 6);
+    expect(deltas.get(g1.id)!.get("A")).toBeCloseTo(EVEN_DELTA, 6);
+    expect(deltas.get(g1.id)!.get("B")).toBeCloseTo(-EVEN_DELTA, 6);
 
-    // Game 2: pre-game A=1532, B=1468 -> favourite wins, delta < 32.
+    // Game 2: pre-game A > B -> favourite wins, delta < even-game delta.
     const d2 = deltas.get(g2.id)!.get("A")!;
     expect(d2).toBeGreaterThan(0);
-    expect(d2).toBeLessThan(32);
+    expect(d2).toBeLessThan(EVEN_DELTA);
     expect(deltas.get(g2.id)!.get("B")).toBeCloseTo(-d2, 6);
 
     // The per-game deltas must sum to each player's final movement from start.
@@ -334,16 +372,16 @@ describe("computeGameDeltas", () => {
     seq = 300;
     const players = [player("A"), player("B")];
     // Excluded first game; the SECOND (included) game must see equal pre-game
-    // ratings (1500/1500) because the excluded one did not move anything.
+    // ratings (100/100) because the excluded one did not move anything.
     const g1 = game(["A"], ["B"], { excluded: true });
     const g2 = game(["A"], ["B"]);
     const deltas = computeGameDeltas([g1, g2], players);
 
-    // g2 evaluated against fresh 1500/1500 -> 32.
-    expect(deltas.get(g2.id)!.get("A")).toBeCloseTo(32, 6);
-    // g1 still reports the delta it would have applied (also 32 at 1500/1500),
+    // g2 evaluated against fresh 100/100 -> even-game delta.
+    expect(deltas.get(g2.id)!.get("A")).toBeCloseTo(EVEN_DELTA, 6);
+    // g1 still reports the delta it would have applied (also even at 100/100),
     // but it is flagged excluded and never moved the running ratings.
-    expect(deltas.get(g1.id)!.get("A")).toBeCloseTo(32, 6);
+    expect(deltas.get(g1.id)!.get("A")).toBeCloseTo(EVEN_DELTA, 6);
   });
 });
 

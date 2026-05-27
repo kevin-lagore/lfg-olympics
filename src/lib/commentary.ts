@@ -10,6 +10,7 @@
 // math lives here as small pure functions so it can be unit-tested and shared by
 // client (stale indicator) and server (route).
 
+import { STARTING_RATING } from "./elo";
 import type { Game, Player, RatingInfo, TournamentCommentary } from "./types";
 
 /**
@@ -114,7 +115,7 @@ export function overallStandings(
   return [...seen]
     .map((id) => ({
       name: nameOf.get(id) ?? "Unknown",
-      rating: ratings.get(id)?.rating ?? 1500,
+      rating: ratings.get(id)?.rating ?? STARTING_RATING,
       wins: wins.get(id) ?? 0,
       losses: losses.get(id) ?? 0,
     }))
