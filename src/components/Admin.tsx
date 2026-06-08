@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Pencil, Plus, Minus, EyeOff } from "lucide-react";
+import { Pencil, Plus, Minus, EyeOff, Trash2, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeRatings, STARTING_RATING } from "@/lib/elo";
 import type { Adjustment, Game, Player } from "@/lib/types";
@@ -110,7 +110,120 @@ export function Admin({
           </ul>
         )}
       </section>
+
+      {/* --- Danger zone: full reset ------------------------------------- */}
+      <ResetTournament onRefresh={onRefresh} />
     </div>
+  );
+}
+
+/**
+ * Danger zone: wipe ALL tournament data (games, adjustments, commentary,
+ * players, activities) for a clean slate before the event. Deletes are
+ * impossible with the public anon key (RLS grants only select/insert/update —
+ * CLAUDE.md §3), so this POSTs a passphrase to the server-only /api/reset route,
+ * which performs the purge with the service-role key. The passphrase is typed by
+ * the admin and compared server-side; it never ships in the client bundle.
+ */
+function ResetTournament({ onRefresh }: { onRefresh: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [token, setToken] = useState("");
+  const [working, setWorking] = useState(false);
+
+  function onOpenChange(next: boolean) {
+    if (!next) setToken("");
+    setOpen(next);
+  }
+
+  async function wipe() {
+    if (!token.trim()) {
+      toast.error("Enter the reset passphrase.");
+      return;
+    }
+    setWorking(true);
+    try {
+      const res = await fetch("/api/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token.trim() }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        deleted?: Record<string, number>;
+      };
+      if (!res.ok) {
+        toast.error(json.error ?? "Reset failed.");
+        return;
+      }
+      const total = Object.values(json.deleted ?? {}).reduce(
+        (sum, n) => sum + Number(n),
+        0,
+      );
+      toast.success(`Tournament reset — ${total} row${total === 1 ? "" : "s"} cleared.`);
+      onOpenChange(false);
+      await onRefresh();
+    } catch {
+      toast.error("Reset failed — network error.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-3 rounded-2xl border-2 border-destructive/30 bg-destructive/5 p-4">
+      <h2 className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-wide text-destructive">
+        <AlertTriangle className="size-4" /> Danger zone
+      </h2>
+      <p className="text-xs text-muted-foreground">
+        Permanently deletes <strong>all</strong> games, adjustments, commentary,
+        players, and activities. Cannot be undone — use only to start fresh
+        before the weekend.
+      </p>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <Button
+          variant="destructive"
+          className="h-12 text-base font-bold"
+          onClick={() => onOpenChange(true)}
+        >
+          <Trash2 className="size-4" /> Reset tournament
+        </Button>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">
+              Wipe ALL data?
+            </DialogTitle>
+            <DialogDescription>
+              This deletes every player, activity, game, adjustment, and the
+              commentary — the whole database. There is no undo. Enter the reset
+              passphrase to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="reset-token">Reset passphrase</Label>
+            <Input
+              id="reset-token"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoComplete="off"
+              placeholder="Type the passphrase"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void wipe();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="destructive"
+              onClick={wipe}
+              disabled={working}
+            >
+              {working ? "Wiping…" : "Wipe everything"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
   );
 }
 
