@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, PlusSquare, ClipboardList } from "lucide-react";
+import { UserPlus, PlusSquare, ClipboardList, Plus, Minus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeRatings, isUpsetForNewGame } from "@/lib/elo";
 import { fireUpsetConfetti } from "@/lib/confetti";
@@ -30,6 +30,20 @@ import {
 import { EmptyState } from "@/components/EmptyState";
 
 const NONE = "__none__";
+
+// Team play supports any (equal) number of players per side. 2 = doubles. The
+// engine (lib/elo.ts) is already array-generic over team members; equal sizes
+// keep the per-player updates zero-sum (CLAUDE.md §4). Cap kept modest for a
+// ~13-player family weekend.
+const MIN_TEAM_SIZE = 2;
+const MAX_TEAM_SIZE = 6;
+
+/** Grow/shrink a slot array to `n`, preserving existing picks. */
+function resizeSlots(arr: string[], n: number): string[] {
+  const next = arr.slice(0, n);
+  while (next.length < n) next.push("");
+  return next;
+}
 
 function PlayerSelect({
   players,
@@ -102,14 +116,27 @@ export function RecordResult({
   // identical but there is no cascading render.
   const [doublesWanted, setDoublesWanted] = useState(false);
   const [activityId, setActivityId] = useState("");
-  // singles: a, b ; doubles: t1a,t1b vs t2a,t2b
+  // singles: a, b ; teams: team1[] vs team2[] (both length === teamSize)
   const [a, setA] = useState("");
   const [b, setB] = useState("");
-  const [t1a, setT1a] = useState("");
-  const [t1b, setT1b] = useState("");
-  const [t2a, setT2a] = useState("");
-  const [t2b, setT2b] = useState("");
+  const [teamSize, setTeamSize] = useState(MIN_TEAM_SIZE);
+  const [team1, setTeam1] = useState<string[]>(() => resizeSlots([], MIN_TEAM_SIZE));
+  const [team2, setTeam2] = useState<string[]>(() => resizeSlots([], MIN_TEAM_SIZE));
   const [submitting, setSubmitting] = useState(false);
+
+  // Resize both teams together so the two sides always stay equal-length
+  // (preserves the zero-sum per-player update — CLAUDE.md §4).
+  const changeTeamSize = (n: number) => {
+    const clamped = Math.max(MIN_TEAM_SIZE, Math.min(MAX_TEAM_SIZE, n));
+    setTeamSize(clamped);
+    setTeam1((prev) => resizeSlots(prev, clamped));
+    setTeam2((prev) => resizeSlots(prev, clamped));
+  };
+
+  const setTeamPlayer = (team: 1 | 2, idx: number, value: string) => {
+    const setter = team === 1 ? setTeam1 : setTeam2;
+    setter((prev) => prev.map((x, i) => (i === idx ? value : x)));
+  };
 
   const selectedActivity = activities.find((x) => x.id === activityId) ?? null;
   const doublesAllowed = selectedActivity?.supports_doubles ?? true;
@@ -119,25 +146,32 @@ export function RecordResult({
   // reverts the form to singles with no extra render.
   const isDoubles = doublesWanted && doublesAllowed;
 
+  // Largest equal team size the current roster can actually fill (two teams of
+  // N need 2N distinct players), bounded by the hard cap. Used to disable the
+  // "+" stepper before it can produce an unfillable form.
+  const maxTeamSize = Math.min(
+    MAX_TEAM_SIZE,
+    Math.floor(activePlayers.length / 2),
+  );
+
   const playerName = (id: string) =>
     players.find((p) => p.id === id)?.name ?? "?";
 
   const clearForm = () => {
     setA("");
     setB("");
-    setT1a("");
-    setT1b("");
-    setT2a("");
-    setT2b("");
+    setTeam1(resizeSlots([], teamSize));
+    setTeam2(resizeSlots([], teamSize));
   };
 
   function validate(): { winners: string[]; losers: string[] } | string {
     if (!activityId) return "Pick an activity.";
     if (isDoubles) {
-      const ids = [t1a, t1b, t2a, t2b];
-      if (ids.some((x) => !x)) return "Pick all four players.";
-      if (new Set(ids).size !== 4) return "No duplicate players in a game.";
-      return { winners: [t1a, t1b], losers: [t2a, t2b] };
+      const ids = [...team1, ...team2];
+      if (ids.some((x) => !x)) return "Pick all players for both teams.";
+      if (new Set(ids).size !== ids.length)
+        return "No duplicate players in a game.";
+      return { winners: team1, losers: team2 };
     }
     if (!a || !b) return "Pick both players.";
     if (a === b) return "No duplicate players in a game.";
@@ -257,7 +291,7 @@ export function RecordResult({
         <>
       <div className="flex items-center justify-between rounded-xl border bg-card p-3">
         <Label htmlFor="doubles" className="text-base">
-          Doubles?
+          Teams?
         </Label>
         <Switch
           id="doubles"
@@ -270,6 +304,39 @@ export function RecordResult({
         <p className="-mt-3 text-xs text-muted-foreground">
           {selectedActivity?.name} is singles-only.
         </p>
+      )}
+
+      {isDoubles && (
+        <div className="flex items-center justify-between rounded-xl border bg-card p-3">
+          <Label className="text-base">Players per team</Label>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="rounded-full"
+              disabled={teamSize <= MIN_TEAM_SIZE}
+              onClick={() => changeTeamSize(teamSize - 1)}
+              aria-label="Fewer players per team"
+            >
+              <Minus className="size-4" />
+            </Button>
+            <span className="w-5 text-center text-lg font-bold tabular-nums">
+              {teamSize}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="rounded-full"
+              disabled={teamSize >= maxTeamSize}
+              onClick={() => changeTeamSize(teamSize + 1)}
+              aria-label="More players per team"
+            >
+              <Plus className="size-4" />
+            </Button>
+          </div>
+        </div>
       )}
 
       <div className="flex flex-col gap-2">
@@ -293,13 +360,27 @@ export function RecordResult({
         <div className="grid grid-cols-1 gap-4">
           <div className="flex flex-col gap-2 rounded-xl border p-3">
             <Label className="text-sm font-semibold">Team 1</Label>
-            <PlayerSelect players={activePlayers} value={t1a} onChange={setT1a} placeholder="Player" />
-            <PlayerSelect players={activePlayers} value={t1b} onChange={setT1b} placeholder="Player" />
+            {team1.map((id, i) => (
+              <PlayerSelect
+                key={i}
+                players={activePlayers}
+                value={id}
+                onChange={(v) => setTeamPlayer(1, i, v)}
+                placeholder={`Player ${i + 1}`}
+              />
+            ))}
           </div>
           <div className="flex flex-col gap-2 rounded-xl border p-3">
             <Label className="text-sm font-semibold">Team 2</Label>
-            <PlayerSelect players={activePlayers} value={t2a} onChange={setT2a} placeholder="Player" />
-            <PlayerSelect players={activePlayers} value={t2b} onChange={setT2b} placeholder="Player" />
+            {team2.map((id, i) => (
+              <PlayerSelect
+                key={i}
+                players={activePlayers}
+                value={id}
+                onChange={(v) => setTeamPlayer(2, i, v)}
+                placeholder={`Player ${i + 1}`}
+              />
+            ))}
           </div>
         </div>
       ) : (
