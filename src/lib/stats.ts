@@ -7,7 +7,8 @@
 // Doubles games count toward BOTH team members' W/L. Excluded games are NOT
 // counted (they are excluded from the system per §2).
 
-import type { Game } from "./types";
+import type { Adjustment, Game, Player } from "./types";
+import { computeRatings, STARTING_RATING } from "./elo";
 
 export type PlayerRecord = {
   playerId: string;
@@ -124,6 +125,124 @@ export function computeActivityStats(
     doubles,
     records,
     headToHead,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Overall (cross-activity) stats — CLAUDE.md §5.
+//
+// Like the per-activity stats above these are DESCRIPTIVE and computed on the
+// client; nothing is stored. The one difference is `rating`: there is a SINGLE
+// global Elo per player (§4), so the overall rating IS that global rating
+// (computeRatings) — it is NOT an average of per-activity ratings (none exist).
+// ---------------------------------------------------------------------------
+
+export type OverallPlayerRow = {
+  playerId: string;
+  wins: number;
+  losses: number;
+  games: number; // wins + losses
+  winPct: number; // Math.round(wins/games*100); 0 when no games
+  activities: number; // distinct activities this player has appeared in
+  rating: number; // the single global Elo rating (computeRatings)
+};
+
+export type OverallStats = {
+  totalGames: number;
+  singles: number;
+  doubles: number;
+  activities: number; // distinct activities with at least one non-excluded game
+  players: number; // number of players considered
+  // Per-player rows, sorted by rating desc, then games desc, then id.
+  rows: OverallPlayerRow[];
+};
+
+/**
+ * Aggregate descriptive stats across ALL activities from the full games list.
+ *
+ * Doubles games count ONCE per participant (each member gets a win/loss), the
+ * same convention as `computeActivityStats`. Excluded games are ignored. The
+ * `rating` on each row is the single global Elo rating from `computeRatings`
+ * (there is no per-activity rating to average — §4).
+ *
+ * @param games        ALL games in the system (any activity, any order).
+ * @param players      the players to produce rows for (one row each).
+ * @param adjustments  manual rating adjustments, passed through to the rating
+ *                     replay (defaults to [] for existing call sites/tests).
+ * @returns overall stats (empty but valid if there are no games/players).
+ */
+export function computeOverallStats(
+  games: Game[],
+  players: Player[],
+  adjustments: Adjustment[] = [],
+): OverallStats {
+  const relevant = games.filter((g) => !g.excluded);
+
+  const ratings = computeRatings(games, players, adjustments);
+
+  const wins = new Map<string, number>();
+  const losses = new Map<string, number>();
+  // Distinct activities each player has appeared in.
+  const activitiesByPlayer = new Map<string, Set<string>>();
+  // Distinct activities overall (with at least one non-excluded game).
+  const allActivities = new Set<string>();
+
+  let singles = 0;
+  let doubles = 0;
+
+  const bumpActivity = (id: string, activityId: string) => {
+    let set = activitiesByPlayer.get(id);
+    if (!set) {
+      set = new Set<string>();
+      activitiesByPlayer.set(id, set);
+    }
+    set.add(activityId);
+  };
+
+  for (const g of relevant) {
+    if (g.is_doubles) doubles += 1;
+    else singles += 1;
+    allActivities.add(g.activity_id);
+
+    for (const id of g.winner_ids) {
+      wins.set(id, (wins.get(id) ?? 0) + 1);
+      bumpActivity(id, g.activity_id);
+    }
+    for (const id of g.loser_ids) {
+      losses.set(id, (losses.get(id) ?? 0) + 1);
+      bumpActivity(id, g.activity_id);
+    }
+  }
+
+  const rows: OverallPlayerRow[] = players
+    .map((p) => {
+      const w = wins.get(p.id) ?? 0;
+      const l = losses.get(p.id) ?? 0;
+      const games = w + l;
+      return {
+        playerId: p.id,
+        wins: w,
+        losses: l,
+        games,
+        winPct: games === 0 ? 0 : Math.round((w / games) * 100),
+        activities: activitiesByPlayer.get(p.id)?.size ?? 0,
+        rating: ratings.get(p.id)?.rating ?? STARTING_RATING,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.rating - a.rating ||
+        b.games - a.games ||
+        a.playerId.localeCompare(b.playerId),
+    );
+
+  return {
+    totalGames: relevant.length,
+    singles,
+    doubles,
+    activities: allActivities.size,
+    players: players.length,
+    rows,
   };
 }
 

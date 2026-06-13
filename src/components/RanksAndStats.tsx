@@ -6,7 +6,7 @@ import type { Activity, Adjustment, Game, Player } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Leaderboard } from "@/components/Leaderboard";
-import { ActivityStats } from "@/components/ActivityStats";
+import { StatsView } from "@/components/StatsView";
 import { ShareButton } from "@/components/ShareButton";
 
 type SubTab = "ranks" | "stats";
@@ -136,10 +136,11 @@ export function RanksAndStats({
           onRefresh={onRefresh}
         />
       ) : (
-        <ActivityStats
+        <StatsView
           players={players}
           activities={activities}
           games={games}
+          adjustments={adjustments}
           loading={loading}
         />
       )}

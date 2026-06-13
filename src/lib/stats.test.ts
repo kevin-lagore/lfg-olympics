@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { computeActivityStats, activityWithMostGames } from "./stats";
-import type { Game } from "./types";
+import {
+  computeActivityStats,
+  activityWithMostGames,
+  computeOverallStats,
+} from "./stats";
+import type { Game, Player } from "./types";
 
 let seq = 0;
 function game(
@@ -19,6 +23,15 @@ function game(
     played_at: opts.played_at ?? stamp,
     excluded: opts.excluded ?? false,
     created_at: opts.created_at ?? stamp,
+  };
+}
+
+function player(id: string, opts: Partial<Player> = {}): Player {
+  return {
+    id,
+    name: opts.name ?? id,
+    active: opts.active ?? true,
+    created_at: opts.created_at ?? "2026-01-01T00:00:00.000Z",
   };
 }
 
@@ -120,6 +133,90 @@ describe("computeActivityStats", () => {
     expect(stats.headToHead.some((h) =>
       (h.aId === "tom" && h.bId === "ann") || (h.aId === "ann" && h.bId === "tom"),
     )).toBe(false);
+  });
+});
+
+describe("computeOverallStats", () => {
+  it("returns a valid empty result with no games or players", () => {
+    const stats = computeOverallStats([], []);
+    expect(stats).toEqual({
+      totalGames: 0,
+      singles: 0,
+      doubles: 0,
+      activities: 0,
+      players: 0,
+      rows: [],
+    });
+  });
+
+  it("aggregates W/L and distinct activities across activities", () => {
+    const games = [
+      game(["tom"], ["dave"], { activity_id: "cornhole" }),
+      game(["tom"], ["dave"], { activity_id: "badminton" }),
+      game(["dave"], ["tom"], { activity_id: "cornhole" }),
+    ];
+    const stats = computeOverallStats(games, [player("tom"), player("dave")]);
+
+    expect(stats.totalGames).toBe(3);
+    expect(stats.singles).toBe(3);
+    expect(stats.doubles).toBe(0);
+    expect(stats.activities).toBe(2); // cornhole + badminton
+    expect(stats.players).toBe(2);
+
+    const tom = stats.rows.find((r) => r.playerId === "tom")!;
+    const dave = stats.rows.find((r) => r.playerId === "dave")!;
+    expect(tom).toMatchObject({ wins: 2, losses: 1, games: 3, activities: 2 });
+    expect(dave).toMatchObject({ wins: 1, losses: 2, games: 3, activities: 2 });
+  });
+
+  it("ignores excluded games", () => {
+    const games = [
+      game(["tom"], ["dave"]),
+      game(["tom"], ["dave"], { excluded: true, activity_id: "badminton" }),
+    ];
+    const stats = computeOverallStats(games, [player("tom"), player("dave")]);
+    expect(stats.totalGames).toBe(1);
+    expect(stats.activities).toBe(1); // badminton game was excluded
+    const tom = stats.rows.find((r) => r.playerId === "tom")!;
+    expect(tom).toMatchObject({ wins: 1, losses: 0, games: 1, activities: 1 });
+  });
+
+  it("rounds winPct and reports 0 for players with no games", () => {
+    // tom: 2 wins / 1 loss => 66.67% -> 67. bob: no games -> 0.
+    const games = [
+      game(["tom"], ["dave"]),
+      game(["tom"], ["dave"]),
+      game(["dave"], ["tom"]),
+    ];
+    const stats = computeOverallStats(games, [
+      player("tom"),
+      player("dave"),
+      player("bob"),
+    ]);
+    const tom = stats.rows.find((r) => r.playerId === "tom")!;
+    const dave = stats.rows.find((r) => r.playerId === "dave")!;
+    const bob = stats.rows.find((r) => r.playerId === "bob")!;
+    expect(tom.winPct).toBe(67); // round(2/3*100)
+    expect(dave.winPct).toBe(33); // round(1/3*100)
+    expect(bob).toMatchObject({ games: 0, winPct: 0, activities: 0 });
+  });
+
+  it("sorts rows by rating desc (then games, then id)", () => {
+    // tom beats dave three times => tom's global rating rises above the
+    // STARTING_RATING, dave's falls below it; bob (no games) stays at start.
+    const games = [
+      game(["tom"], ["dave"]),
+      game(["tom"], ["dave"]),
+      game(["tom"], ["dave"]),
+    ];
+    const stats = computeOverallStats(games, [
+      player("dave"),
+      player("bob"),
+      player("tom"),
+    ]);
+    expect(stats.rows.map((r) => r.playerId)).toEqual(["tom", "bob", "dave"]);
+    expect(stats.rows[0].rating).toBeGreaterThan(stats.rows[1].rating);
+    expect(stats.rows[1].rating).toBeGreaterThan(stats.rows[2].rating);
   });
 });
 
